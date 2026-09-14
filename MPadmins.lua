@@ -10,6 +10,7 @@ local ffi      = require("ffi")
 local encoding = require("encoding")
 local dlstatus = require("moonloader").download_status
 local inicfg   = require("inicfg")
+local effil = require("effil")
 encoding.default = "CP1251"
 local u8       = encoding.UTF8
 
