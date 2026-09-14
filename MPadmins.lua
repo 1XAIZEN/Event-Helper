@@ -17,9 +17,8 @@ local u8       = encoding.UTF8
 local UPDATE_CFG = {
     CURRENT_NUM   = 3.8,
     CURRENT_STR   = "v3.8",
-    -- Вставьте сюда ВАШИ Raw-ссылки с GitHub:
-    INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/update.ini",
-    SCRIPT_URL    = "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins.lua",
+    INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/update.ini",
+    SCRIPT_URL    = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/MPadmins.lua",
     TEMP_FILE     = getWorkingDirectory() .. "/update.ini"
 }
 
@@ -422,35 +421,71 @@ local function cleanColorCodes(text)
 end
 
 -- ==================== ЛОГИКА АВТООБНОВЛЕНИЯ ====================
-local function checkScriptUpdate()
-    if UPDATE_CFG.INFO_URL:find("НИК/РЕПОЗИТОРИЙ") then return end
-    
+local function parseIniString(content)
+    local data = {}
+    for line in content:gmatch("[^\r\n]+") do
+        line = line:gsub("^%s*(.-)%s*$", "%1")
+        if not line:find("^%[") and not line:find("^;") and not line:find("^#") then
+            local k, v = line:match("^([^=]+)=(.*)$")
+            if k and v then
+                k = k:gsub("^%s*(.-)%s*$", "%1")
+                v = v:gsub("^%s*(.-)%s*$", "%1")
+                data[k] = v
+            end
+        end
+    end
+    return data
+end
+
+local function checkScriptUpdate(is_manual)
+    if is_manual then
+        sendMsg(C.WARN, "Проверка наличия обновлений на сервере...")
+    end
+
     downloadUrlToFile(UPDATE_CFG.INFO_URL, UPDATE_CFG.TEMP_FILE, function(id, status)
         if status == dlstatus.STATUS_ENDDOWNLOADDATA then
-            if doesFileExist(UPDATE_CFG.TEMP_FILE) then
-                -- Читаем ini через встроенный модуль inicfg
-                local updateIni = inicfg.load(nil, UPDATE_CFG.TEMP_FILE)
-                os.remove(UPDATE_CFG.TEMP_FILE) -- удаляем временный файл
+            local f = io.open(UPDATE_CFG.TEMP_FILE, "r")
+            if not f then
+                if is_manual then
+                    sendMsg(C.RED, "Не удалось открыть скачанный update.ini!")
+                end
+                return
+            end
 
-                if updateIni and updateIni.info and updateIni.info.vers then
-                    local server_vers = tonumber(updateIni.info.vers)
-                    if server_vers and server_vers > UPDATE_CFG.CURRENT_NUM then
-                        UpdateUI.new_vers  = updateIni.info.vers_text or tostring(server_vers)
-                        UpdateUI.changelog = {}
-                        
-                        -- Считываем строки изменений change1, change2, change3...
-                        for i = 1, 10 do
-                            local line = updateIni.info["change" .. i]
-                            if line and #line > 0 then
-                                table.insert(UpdateUI.changelog, line)
-                            end
+            local content = f:read("*a")
+            f:close()
+            os.remove(UPDATE_CFG.TEMP_FILE)
+
+            local iniData = parseIniString(content)
+            local server_vers = tonumber(iniData["vers"])
+
+            if server_vers then
+                if server_vers > UPDATE_CFG.CURRENT_NUM then
+                    UpdateUI.new_vers  = iniData["vers_text"] or tostring(server_vers)
+                    UpdateUI.changelog = {}
+
+                    for i = 1, 15 do
+                        local ch = iniData["change" .. i]
+                        if ch and #ch > 0 then
+                            table.insert(UpdateUI.changelog, ch)
                         end
-                        
-                        -- Открываем окно обновления на экране
-                        UpdateUI.show[0] = true
-                        sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] Доступно обновление: {00FF00}" .. UpdateUI.new_vers, -1)
+                    end
+
+                    UpdateUI.show[0] = true
+                    sendMsg(C.GREEN, string.format("Доступно новое обновление: %s!", UpdateUI.new_vers))
+                else
+                    if is_manual then
+                        sendMsg(C.GREEN, string.format("У вас установлена последняя версия скрипта (%s)!", UPDATE_CFG.CURRENT_STR))
                     end
                 end
+            else
+                if is_manual then
+                    sendMsg(C.RED, "Ошибка: в файле update.ini не найдена строка 'vers'!")
+                end
+            end
+        elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
+            if is_manual then
+                sendMsg(C.RED, "Ошибка соединения с GitHub! Проверьте ссылку на update.ini.")
             end
         end
     end)
@@ -464,14 +499,14 @@ local function startScriptDownload()
         if status == dlstatus.STATUS_ENDDOWNLOADDATA then
             UpdateUI.downloading = false
             UpdateUI.show[0] = false
-            sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] {00FF00}Скрипт успешно обновлён! Перезагрузка...", -1)
+            sendMsg(C.GREEN, "Скрипт успешно обновлён! Перезагрузка...")
             lua_thread.create(function()
                 wait(600)
                 thisScript():reload()
             end)
         elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
             UpdateUI.downloading = false
-            sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] {FF0000}Ошибка при скачивании обновления!", -1)
+            sendMsg(C.RED, "Ошибка при скачивании скрипта! Проверьте ссылку на MPadmins.lua.")
         end
     end)
 end
@@ -3284,6 +3319,13 @@ function main()
             checkScriptUpdate()
             sendMsg(C.WARN, "Проверка обновлений запущена...")
         end
+    end)
+
+    checkScriptUpdate(false)
+
+    -- Ручная проверка по команде /checkupdate
+    sampRegisterChatCommand("checkupdate", function()
+        checkScriptUpdate(true)
     end)
 
     sampRegisterChatCommand("mpwin", announceWinner)
