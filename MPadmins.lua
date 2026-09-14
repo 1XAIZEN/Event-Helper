@@ -1,5 +1,5 @@
 script_name("MPadmins")
-script_version("3.8")
+script_version("3.9")
 script_author("Mikki_Tyler")
 
 local se       = require("samp.events")
@@ -16,8 +16,8 @@ local u8       = encoding.UTF8
 
 -- ==================== НАСТРОЙКИ АВТООБНОВЛЕНИЯ ====================
 local UPDATE_CFG = {
-    CURRENT_NUM   = 3.8,
-    CURRENT_STR   = "v3.8",
+    CURRENT_NUM   = 3.9,
+    CURRENT_STR   = "v3.9",
     -- Прямая ссылка на файл update.ini
     INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/update.ini",
     -- Прямая ссылка на скачивание самого скрипта
@@ -483,10 +483,6 @@ local function checkScriptUpdate(is_manual)
         local data = parseIniText(response_text)
         local server_vers = tonumber(data["vers"])
 
-        if is_manual then
-            sendMsg(C.WHITE, string.format("Текущая версия: {00FF00}%s{FFFFFF} | На сервере: {FFFF00}%s", UPDATE_CFG.CURRENT_STR, data["vers_text"] or tostring(server_vers or "не указана")))
-        end
-
         if server_vers and server_vers > UPDATE_CFG.CURRENT_NUM then
             UpdateUI.new_vers  = data["vers_text"] or tostring(server_vers)
             UpdateUI.changelog = {}
@@ -500,7 +496,7 @@ local function checkScriptUpdate(is_manual)
             end
 
             UpdateUI.show[0] = true
-            sendMsg(C.GREEN, "Найдена новая версия! Открыто окно установки.")
+            sendMsg(C.GREEN, "Найдена новая версия!")
         else
             if is_manual then
                 sendMsg(C.GREEN, "У вас установлена самая последняя версия скрипта!")
