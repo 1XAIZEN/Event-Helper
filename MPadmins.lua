@@ -18,7 +18,7 @@ local UPDATE_CFG = {
     CURRENT_NUM   = 3.8,
     CURRENT_STR   = "v3.8",
     INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/update.ini",
-    SCRIPT_URL    = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/MPadmins.lua",
+    SCRIPT_URL    = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/MPadmins.lua",
     TEMP_FILE     = getWorkingDirectory() .. "/update.ini"
 }
 
