@@ -8,26 +8,28 @@ local vkeys    = require("vkeys")
 local imgui    = require("mimgui")
 local ffi      = require("ffi")
 local encoding = require("encoding")
+local dlstatus = require("moonloader").download_status
 encoding.default = "CP1251"
 local u8       = encoding.UTF8
 
--- ==================== ÊÎÍÔÈÃÓÐÀÖÈß ÎÁÍÎÂËÅÍÈÉ ====================
-local UPDATE_CONFIG = {
-    ENABLED  = true,
-    -- ÇÀÌÅÍÈÒÅ ÍÀ ÂÀØÓ RAW-ÑÑÛËÊÓ ÍÀ version.json ÍÀ GITHUB:
-    JSON_URL = "https://raw.githubusercontent.com/qrlk/moonloader-script-updater/master/version.json"
+-- ==================== НАСТРОЙКИ АВТООБНОВЛЕНИЯ ====================
+local UPDATE_CFG = {
+    CURRENT_NUM   = 3.7,
+    CURRENT_STR   = "v3.7",
+    -- Вставьте сюда ВАШИ Raw-ссылки с GitHub:
+    INFO_URL      = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/update.json",
+    SCRIPT_URL    = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/MPadmins.lua",
+    TEMP_FILE     = getWorkingDirectory() .. "/config/MPadmins_update.json"
 }
 
-local UpdateState = {
-    show_window  = imgui.new.bool(false),
-    new_version  = "",
-    update_url   = "",
-    changelog    = {},
-    is_downloading = false,
-    status_text  = ""
+local UpdateUI = {
+    show        = imgui.new.bool(false),
+    downloading = false,
+    new_vers    = "",
+    changelog   = {}
 }
 
--- ==================== ÊÎÍÔÈÃÓÐÀÖÈß ====================
+-- ==================== КОНФИГУРАЦИЯ ====================
 local CFG = {
     PREFIX         = "{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] ",
     CONFIG_PATH    = getWorkingDirectory() .. "/config/MPadmins.json",
@@ -88,7 +90,7 @@ local DIALOGS = {
 }
 
 local WEAPON_NAMES = {
-    u8"Íå âûäàâàòü îðóæèå",
+    u8"Не выдавать оружие",
     u8"(ID: 1) Brass Knuckles", u8"(ID: 2) Golf Club", u8"(ID: 3) Night Stick", u8"(ID: 4) Knife",
     u8"(ID: 5) Baseball Bat", u8"(ID: 6) Shovel", u8"(ID: 7) Pool Cue", u8"(ID: 8) Katana",
     u8"(ID: 9) Chainsaw", u8"(ID: 10) Purple Dildo", u8"(ID: 11) Big White Vibrator",
@@ -102,9 +104,9 @@ local WEAPON_NAMES = {
 }
 
 local SPAWN_TYPES = {
-    u8"1. Ñïàâí âñåõ íà îäíó ïîçèöèþ",
-    u8"2. Ñïàâí íà ðàíäîìíûå ïîçèöèè",
-    u8"3. Ñïàâí íà ïîçèöèè ïî ïîðÿäêó"
+    u8"1. Спавн всех на одну позицию",
+    u8"2. Спавн на рандомные позиции",
+    u8"3. Спавн на позиции по порядку"
 }
 
 local vehicle_names = {
@@ -147,47 +149,47 @@ table.sort(cars_list)
 
 local DEFAULT_MP_RULES = {
     sectors = {
-        "Â ÷àò áóäåò ïèñàòüñÿ, êàêîé ñåêòîð áåçîïàñåí",
-        "Âàøà çàäà÷à óñïåòü âñòàòü â áåçîïàñíûé ñåêòîð",
-        "Áåçîïàñíûé ñåêòîð íàõîäèòñÿ çà êðàñíî-áåëîé ëèíèåé",
-        "Êòî íå óñïåâàåò - ïðîèãðûâàåò",
-        "Æåëàåì âñåì óäà÷è"
+        "В чат будет писаться, какой сектор безопасен",
+        "Ваша задача успеть встать в безопасный сектор",
+        "Безопасный сектор находится за красно-белой линией",
+        "Кто не успевает - проигрывает",
+        "Желаем всем удачи"
     },
     rlgl = {
-        "Íà çåëåíûé ñâåò ðàçðåøåíî ñâîáîäíî äâèãàòüñÿ âïåðåä",
-        "Íà êðàñíûé ñâåò íåîáõîäèìî ïîëíîñòüþ çàìåðåòü",
-        "Ëþáîå äâèæåíèå èëè øàã íà êðàñíûé ñâåò — ñïàâí",
-        "Ïîáåæäàåò òîò, êòî ïåðâûì äîáåðåòñÿ äî ôèíèøà",
-        "Æåëàåì âñåì óäà÷è"
+        "На зеленый свет разрешено свободно двигаться вперед",
+        "На красный свет необходимо полностью замереть",
+        "Любое движение или шаг на красный свет — спавн",
+        "Побеждает тот, кто первым доберется до финиша",
+        "Желаем всем удачи"
     },
     chairs = {
-        "Ïî êîìàíäå ÑÒÀÐÒ — âñå êàòàþòñÿ ïî êðóãó",
-        "Êàê òîëüêî ïðîçâó÷èò êîìàíäà ÑÒÎÏ — çàíèìàéòå ñâîáîäíûå ìåñòà",
-        "Êòî íå óñïåë çàíÿòü ñòóë / ìåñòî — âûáûâàåò",
-        "Çàïðåùåíî çàíèìàòü ñâîáîäíî ìåñòî ðàíüøå âðåìåíè",
-        "Ëþáîé ñïîñîá æóëüíè÷åñòâà = ÑÏÀÂÍ",
-        "Òàì ãäå ñòîÿò îòáîéíèêè - ìåñòà íåò",
-        "Æåëàåì âñåì óäà÷è"
+        "По команде СТАРТ — все катаются по кругу",
+        "Как только прозвучит команда СТОП — занимайте свободные места",
+        "Кто не успел занять стул / место — выбывает",
+        "Запрещено занимать свободно место раньше времени",
+        "Любой способ жульничества = СПАВН",
+        "Там где стоят отбойники - места нет",
+        "Желаем всем удачи"
     },
     dm = {
-        "Âàøà çàäà÷à — ñäåëàòü êàê ìîæíî áîëüøå óáèéñòâ çà 10 ìèíóò",
-        "Ïîñëå ñìåðòè âû àâòîìàòè÷åñêè âîçðîæäàåòåñü ÷åðåç 5 ñåêóíä",
-        "Ïîáåäèòåëåì ñòàíîâèòñÿ èãðîê, íàáðàâøèé áîëüøå âñåõ ôðàãîâ",
-        "Æåëàåì âñåì óäà÷è"
+        "Ваша задача — сделать как можно больше убийств за 10 минут",
+        "После смерти вы автоматически возрождаетесь через 5 секунд",
+        "Победителем становится игрок, набравший больше всех фрагов",
+        "Желаем всем удачи"
     },
     derby = {
-        "Âàøà çàäà÷à — òàðàíèòü ìàøèíû ïðîòèâíèêîâ è âûæèâàòü",
-        "Åñëè âàø àâòîìîáèëü ñèëüíî ñëîìàåòñÿ èëè çàãîðèòñÿ — âû âûáûâàåòå",
-        "Âûõîäèòü èç àâòîìîáèëÿ ñòðîãî çàïðåùåíî (àâòî-ñïàâí)",
-        "Ïîáåæäàåò ïîñëåäíèé îñòàâøèéñÿ ó÷àñòíèê íà àðåíå",
-        "Æåëàåì âñåì óäà÷è"
+        "Ваша задача — таранить машины противников и выживать",
+        "Если ваш автомобиль сильно сломается или загорится — вы выбываете",
+        "Выходить из автомобиля строго запрещено (авто-спавн)",
+        "Побеждает последний оставшийся участник на арене",
+        "Желаем всем удачи"
     },
     potato = {
-        "Îäèí èç èãðîêîâ ïîëó÷àåò ãîðÿ÷óþ êàðòîøêó",
-        "Ó âàñ åñòü ðîâíî 10 ñåêóíä, ÷òîáû ïîäáåæàòü è ïåðåäàòü åå äðóãîìó",
-        "Òîò, ó êîãî êàðòîøêà âçîðâåòñÿ ïî èñòå÷åíèè âðåìåíè — âûáûâàåò",
-        "Ïîáåæäàåò ïîñëåäíèé âûæèâøèé ó÷àñòíèê",
-        "Æåëàåì âñåì óäà÷è"
+        "Один из игроков получает горячую картошку",
+        "У вас есть ровно 10 секунд, чтобы подбежать и передать ее другому",
+        "Тот, у кого картошка взорвется по истечении времени — выбывает",
+        "Побеждает последний выживший участник",
+        "Желаем всем удачи"
     }
 }
 
@@ -233,7 +235,7 @@ local Z_DATA = {
 local SECTOR_NAMES = { "A", "B", "C", "D" }
 
 local DEFAULT_MP_NAMES = {
-    "Êîðîëü ÓÇÈ", "Ãîðÿ÷àÿ êàðòîøêà", "Ñåêòîð ãàçà", "Ïðÿòêè íà êîðàáëå", "Ñòóëü÷èêè", "Äåðáè", "Ôàáðèêà ôðàãîâ"
+    "Король УЗИ", "Горячая картошка", "Сектор газа", "Прятки на корабле", "Стульчики", "Дерби", "Фабрика фрагов"
 }
 
 local DEFAULT_PRIZES = {
@@ -241,7 +243,7 @@ local DEFAULT_PRIZES = {
     "30.000.000$", "35.000.000$", "40.000.000$", "45.000.000$", "50.000.000$"
 }
 
--- ==================== ÑÎÑÒÎßÍÈÅ (STATE) ====================
+-- ==================== СОСТОЯНИЕ (STATE) ====================
 local Core = {
     running            = false,
     fetching_list      = false,
@@ -312,7 +314,7 @@ local st = {
     derbySelectedCar = 0,
     derbyPlayersWithVeh = {},
     vodaActive       = false,
-    vodaReason       = "Âû áûëè çàñïàâíåíû, òàê êàê óïàëè â âîäó",
+    vodaReason       = "Вы были заспавнены, так как упали в воду",
     autospheal       = false,
     autosparm        = false,
     antimask         = false,
@@ -376,10 +378,9 @@ local B = {
     winner_input_id = imgui.new.char[16](""),
     new_preset_name = imgui.new.char[64](""),
 
-    -- Ïàðàìåòðû /eventmenu
-    ev_new_title   = imgui.new.char[128](u8"Ñòóëü÷èêè"),
+    ev_new_title   = imgui.new.char[128](u8"Стульчики"),
     ev_prize       = imgui.new.char[64](u8"50.000.000$"),
-    ev_broadcast   = imgui.new.char[256](u8'[Event] Ñåé÷àñ ïðîéäåò ÌÏ "Ñòóëü÷èêè". Ïðèç: 50.000.000$ - /gotp'),
+    ev_broadcast   = imgui.new.char[256](u8'[Event] Сейчас пройдет МП "Стульчики". Приз: 50.000.000$ - /gotp'),
     ev_limit       = imgui.new.int(100),
     ev_tp_time     = imgui.new.int(60),
     ev_password    = imgui.new.char[16]("0"),
@@ -397,7 +398,6 @@ local B = {
 }
 
 local RuleEditBuffers = {}
-
 local pointMarker = nil
 local pZones, mpZoneData, fontText, fontHUD, fontSector, screenW, screenH = {}, nil, nil, nil, nil, 0, 0
 local NEAR_PLANE_EPSILON = 1e-3
@@ -406,77 +406,7 @@ local players_monitor_list = {}
 local Presets = {}
 local PresetsList = {}
 
--- ==================== ÑÈÑÒÅÌÀ ÏÐÎÂÅÐÊÈ È ÓÑÒÀÍÎÂÊÈ ÎÁÍÎÂËÅÍÈß ====================
-local function checkScriptUpdate()
-    if not UPDATE_CONFIG.ENABLED then return end
-    lua_thread.create(function()
-        local d = require('moonloader').download_status
-        local tmpFile = os.tmpname()
-        if doesFileExist(tmpFile) then os.remove(tmpFile) end
-
-        -- Ñêà÷èâàåì version.json ñ äîáàâëåíèåì timestamp ïðîòèâ êýøèðîâàíèÿ
-        local cacheBustUrl = UPDATE_CONFIG.JSON_URL .. "?" .. tostring(os.time())
-        downloadUrlToFile(cacheBustUrl, tmpFile, function(id, status, p1, p2)
-            if status == d.STATUSEX_ENDDOWNLOAD then
-                if doesFileExist(tmpFile) then
-                    local f = io.open(tmpFile, "r")
-                    if f then
-                        local content = f:read("*a")
-                        f:close()
-                        os.remove(tmpFile)
-
-                        local succ, data = pcall(decodeJson, content)
-                        if succ and type(data) == "table" and data.latest then
-                            if tostring(data.latest) ~= tostring(thisScript().version) then
-                                UpdateState.new_version = tostring(data.latest)
-                                UpdateState.update_url  = data.updateurl or ""
-                                UpdateState.changelog   = type(data.changelog) == "table" and data.changelog or {}
-                                UpdateState.show_window[0] = true
-                                sampAddChatMessage(CFG.PREFIX .. C.WARN .. "Îáíàðóæåíî îáíîâëåíèå: v" .. UpdateState.new_version .. "! Îòêðîéòå îêíî ñêðèïòà äëÿ óñòàíîâêè.", -1)
-                            else
-                                print("[" .. thisScript().name .. "]: Ó âàñ óñòàíîâëåíà àêòóàëüíàÿ âåðñèÿ (v" .. thisScript().version .. ").")
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-    end)
-end
-
-local function downloadAndInstallUpdate()
-    if UpdateState.is_downloading then return end
-    if not UpdateState.update_url or UpdateState.update_url == "" then
-        sampAddChatMessage(CFG.PREFIX .. C.RED .. "Îøèáêà: URL äëÿ îáíîâëåíèÿ îòñóòñòâóåò!", -1)
-        return
-    end
-
-    UpdateState.is_downloading = true
-    UpdateState.status_text = "Çàãðóçêà íîâîé âåðñèè..."
-
-    lua_thread.create(function()
-        local d = require('moonloader').download_status
-        downloadUrlToFile(UpdateState.update_url, thisScript().path, function(id, status, p1, p2)
-            if status == d.STATUS_DOWNLOADINGDATA then
-                UpdateState.status_text = string.format("Çàãðóçêà: %d / %d áàéò", p1, p2)
-            elseif status == d.STATUS_ENDDOWNLOADDATA then
-                UpdateState.status_text = "Óñòàíîâêà çàâåðøåíà! Ïåðåçàãðóçêà..."
-                sampAddChatMessage(CFG.PREFIX .. C.GREEN .. "Ñêðèïò óñïåøíî îáíîâëåí äî v" .. UpdateState.new_version .. "! Ïåðåçàãðóçêà...", -1)
-                lua_thread.create(function()
-                    wait(1000)
-                    thisScript():reload()
-                end)
-            end
-            if status == d.STATUSEX_ENDDOWNLOAD and not UpdateState.status_text:find("Ïåðåçàãðóçêà") then
-                UpdateState.is_downloading = false
-                UpdateState.status_text = "Îøèáêà ïðè çàãðóçêå îáíîâëåíèÿ!"
-                sampAddChatMessage(CFG.PREFIX .. C.RED .. "Íå óäàëîñü ñêà÷àòü îáíîâëåíèå!", -1)
-            end
-        end)
-    end)
-end
-
--- ==================== ÁÀÇÎÂÛÅ ÔÓÍÊÖÈÈ ====================
+-- ==================== БАЗОВЫЕ ФУНКЦИИ ====================
 local function sendMsg(color, text)
     sampAddChatMessage(CFG.PREFIX .. color .. text, -1)
 end
@@ -489,6 +419,104 @@ end
 local function cleanColorCodes(text)
     return text and text:gsub("{%x%x%x%x%x%x}", "") or ""
 end
+
+-- ==================== ЛОГИКА АВТООБНОВЛЕНИЯ ====================
+local function checkScriptUpdate()
+    if UPDATE_CFG.INFO_URL:find("YOUR_USERNAME") then
+        return -- URL еще не настроен
+    end
+    downloadUrlToFile(UPDATE_CFG.INFO_URL, UPDATE_CFG.TEMP_FILE, function(id, status)
+        if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+            if doesFileExist(UPDATE_CFG.TEMP_FILE) then
+                local f = io.open(UPDATE_CFG.TEMP_FILE, "r")
+                if f then
+                    local content = f:read("*a")
+                    f:close()
+                    os.remove(UPDATE_CFG.TEMP_FILE)
+
+                    local ok, data = pcall(decodeJson, content)
+                    if ok and type(data) == "table" and data.version then
+                        if tonumber(data.version) > UPDATE_CFG.CURRENT_NUM then
+                            UpdateUI.new_vers  = data.version_text or tostring(data.version)
+                            UpdateUI.changelog = data.changelog or {}
+                            UpdateUI.show[0]   = true
+                            sendMsg(C.WARN, "Доступно новое обновление: " .. C.GREEN .. UpdateUI.new_vers)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function startScriptDownload()
+    if UpdateUI.downloading then return end
+    UpdateUI.downloading = true
+
+    downloadUrlToFile(UPDATE_CFG.SCRIPT_URL, thisScript().path, function(id, status)
+        if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+            UpdateUI.downloading = false
+            UpdateUI.show[0] = false
+            sendMsg(C.GREEN, "Скрипт успешно обновлён до версии " .. UpdateUI.new_vers .. "! Перезагрузка...")
+            lua_thread.create(function()
+                wait(800)
+                thisScript():reload()
+            end)
+        elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
+            UpdateUI.downloading = false
+            sendMsg(C.RED, "Ошибка при загрузке обновления! Проверьте ссылку на скрипт.")
+        end
+    end)
+end
+
+-- ==================== ОКНО ОБНОВЛЕНИЯ (MIMGUI) ====================
+imgui.OnFrame(function() return UpdateUI.show[0] end, function()
+    local resW, resH = getScreenResolution()
+    imgui.SetNextWindowSize(imgui.ImVec2(480, 290), imgui.Cond.Always)
+    imgui.SetNextWindowPos(imgui.ImVec2((resW - 480) / 2, (resH - 290) / 2), imgui.Cond.Always)
+    
+    local flags = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize
+    if imgui.Begin(u8"Обновление MPadmins##UpdateWindow", UpdateUI.show, flags) then
+        imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, 1.0), string.format(u8"Доступно новое обновление! %s", UpdateUI.new_vers))
+        imgui.Separator()
+        imgui.Spacing()
+
+        imgui.TextColored(imgui.ImVec4(0.9, 0.7, 0.2, 1.0), u8"Список изменений / улучшений:")
+        imgui.Spacing()
+
+        imgui.BeginChild("##ChangelogScroll", imgui.ImVec2(-1, 130), true)
+        if #UpdateUI.changelog == 0 then
+            imgui.BulletText(u8"Общие улучшения стабильности и исправление ошибок.")
+        else
+            for _, line in ipairs(UpdateUI.changelog) do
+                imgui.BulletText(u8(line))
+            end
+        end
+        imgui.EndChild()
+
+        imgui.Spacing()
+        imgui.Separator()
+        imgui.Spacing()
+
+        if UpdateUI.downloading then
+            imgui.TextColored(imgui.ImVec4(0.3, 0.8, 1.0, 1.0), u8"Загрузка обновления, подождите...")
+        else
+            imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.18, 0.65, 0.28, 0.90))
+            imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(0.25, 0.80, 0.35, 1.0))
+            if imgui.Button(u8"Установить", imgui.ImVec2(150, 30)) then
+                startScriptDownload()
+            end
+            imgui.PopStyleColor(2)
+
+            imgui.SameLine()
+            if imgui.Button(u8"Позже", imgui.ImVec2(100, 30)) then
+                UpdateUI.show[0] = false
+            end
+        end
+
+        imgui.End()
+    end
+end)
 
 local function RadioButton(label, active)
     if imgui.RadioButtonBool then
@@ -518,7 +546,7 @@ local function initRuleBuffers()
     end
 end
 
--- ==================== ÑÎÕÐÀÍÅÍÈÅ / ÇÀÃÐÓÇÊÀ ÊÎÍÔÈÃÀ ====================
+-- ==================== СОХРАНЕНИЕ / ЗАГРУЗКА КОНФИГА ====================
 local function saveConfig()
     local cfgData = {
         derbyHpThreshold = st.derbyHpThreshold,
@@ -624,51 +652,29 @@ local function loadConfig()
     initRuleBuffers()
 end
 
--- ==================== ÏÐÅÑÅÒÛ ====================
+-- ==================== СИСТЕМА ПРЕСЕТОВ ====================
 local DEFAULT_PRESETS = {
-    ["Ñòóëü÷èêè"] = {
-        title = "Ñòóëü÷èêè", prize = "50.000.000$",
-        broadcast = '[Event] Ñåé÷àñ ïðîéäåò ÌÏ "Ñòóëü÷èêè". Ïðèç: 50.000.000$ - /gotp',
+    ["Стульчики"] = {
+        title = "Стульчики", prize = "50.000.000$",
+        broadcast = '[Event] Сейчас пройдет МП "Стульчики". Приз: 50.000.000$ - /gotp',
         limit = 100, tp_time = 60, password = "0", health = 100, armour = 0, skin = 0,
         weapon_sel = 0, ammo_count = 0,
-        rule1 = "Áåãàéòå ïî êðóãó, ïîêà èãðàåò ìóçûêà",
-        rule2 = "Ïî êîìàíäå ÑÒÎÏ çàéìèòå ñòóë",
-        rule3 = "Êòî áåç ñòóëà - âûáûâàåò",
+        rule1 = "Бегайте по кругу, пока играет музыка",
+        rule2 = "По команде СТОП займите стул",
+        rule3 = "Кто без стула - выбывает",
         sp_count = 1, sp_type = 0, sp_slot = 0,
         toggles = { take_guns = true, re_tp = false, launcher = false, pvp_dmg = true, accessories = false, guards = true, lic_car = false, lic_moto = false, lic_boat = false, lic_fly = false, collision = true }
     },
-    ["Äåðáè"] = {
-        title = "Äåðáè", prize = "50.000.000$",
-        broadcast = '[Event] Ñåé÷àñ ïðîéäåò ÌÏ "Äåðáè". Ïðèç: 50.000.000$ - /gotp',
+    ["Дерби"] = {
+        title = "Дерби", prize = "50.000.000$",
+        broadcast = '[Event] Сейчас пройдет МП "Дерби". Приз: 50.000.000$ - /gotp',
         limit = 50, tp_time = 60, password = "0", health = 100, armour = 0, skin = 0,
         weapon_sel = 0, ammo_count = 0,
-        rule1 = "Òàðàíüòå ìàøèíû äðóãèõ ó÷àñòíèêîâ",
-        rule2 = "Âûõîä èç àâòî èëè ìàëî HP - ñïàâí",
-        rule3 = "Ïîáåæäàåò ïîñëåäíèé âûæèâøèé",
+        rule1 = "Тараньте машины других участников",
+        rule2 = "Выход из авто или мало HP - спавн",
+        rule3 = "Побеждает последний выживший",
         sp_count = 1, sp_type = 0, sp_slot = 0,
         toggles = { take_guns = true, re_tp = false, launcher = false, pvp_dmg = true, accessories = false, guards = true, lic_car = true, lic_moto = false, lic_boat = false, lic_fly = false, collision = false }
-    },
-    ["Êîðîëü Äèãëà"] = {
-        title = "Êîðîëü Äèãëà", prize = "50.000.000$",
-        broadcast = '[Event] Ñåé÷àñ ïðîéäåò ÌÏ "Êîðîëü Äèãëà". Ïðèç: 50.000.000$ - /gotp',
-        limit = 60, tp_time = 60, password = "0", health = 100, armour = 100, skin = 0,
-        weapon_sel = 20, ammo_count = 150,
-        rule1 = "Ïåðåñòðåëêà íà ïèñòîëåòàõ Desert Eagle",
-        rule2 = "Áðîíÿ è õèëë âî âðåìÿ áîÿ çàïðåùåíû",
-        rule3 = "Ïîáåæäàåò ïîñëåäíèé îñòàâøèéñÿ",
-        sp_count = 2, sp_type = 1, sp_slot = 0,
-        toggles = { take_guns = true, re_tp = false, launcher = false, pvp_dmg = false, accessories = false, guards = true, lic_car = false, lic_moto = false, lic_boat = false, lic_fly = false, collision = false }
-    },
-    ["Ñâåòîôîð"] = {
-        title = "Ñâåòîôîð", prize = "50.000.000$",
-        broadcast = '[Event] Ñåé÷àñ ïðîéäåò ÌÏ "Ñâåòîôîð". Ïðèç: 50.000.000$ - /gotp',
-        limit = 80, tp_time = 60, password = "0", health = 100, armour = 0, skin = 0,
-        weapon_sel = 0, ammo_count = 0,
-        rule1 = "Áåã òîëüêî íà çåëåíûé ñâåò",
-        rule2 = "Íà êðàñíûé ñâåò ïîëíîñòüþ çàìåðåòü",
-        rule3 = "Ëþáîé øàã íà êðàñíûé = ñïàâí",
-        sp_count = 1, sp_type = 0, sp_slot = 0,
-        toggles = { take_guns = true, re_tp = false, launcher = false, pvp_dmg = true, accessories = false, guards = true, lic_car = false, lic_moto = false, lic_boat = false, lic_fly = false, collision = false }
     }
 }
 
@@ -791,7 +797,7 @@ local function getEffectiveEventName()
     end
     local custom = u8:decode(ffi.string(B.ao_custom_mp)):gsub("^%s*(.-)%s*$", "%1")
     if #custom > 0 then return custom end
-    return st.aoMpList[st.aoSelectedMp + 1] or "Ìåðîïðèÿòèå"
+    return st.aoMpList[st.aoSelectedMp + 1] or "Мероприятие"
 end
 
 local function getEffectivePrize()
@@ -805,32 +811,32 @@ end
 local function generateBroadcastTemplate()
     local name = getEffectiveEventName()
     local prize = getEffectivePrize()
-    return string.format('[Event] Ñåé÷àñ ïðîéäåò ÌÏ "%s". Ïðèç: %s - /gotp', name, prize)
+    return string.format('[Event] Сейчас пройдет МП "%s". Приз: %s - /gotp', name, prize)
 end
 
 local function announceWinner(targetId)
     local id = tonumber(targetId)
     if not id then
-        sendMsg(C.RED, "Óêàæèòå ID èãðîêà! Ïðèìåð: /mpwin 661")
+        sendMsg(C.RED, "Укажите ID игрока! Пример: /mpwin 661")
         return
     end
 
     if not sampIsPlayerConnected(id) then
-        sendMsg(C.RED, string.format("Èãðîê ñ ID %d íå â ñåòè!", id))
+        sendMsg(C.RED, string.format("Игрок с ID %d не в сети!", id))
         return
     end
 
     local nick = sampGetPlayerNickname(id)
     local mpName = getEffectiveEventName():gsub('^%s*["\']?', ''):gsub('["\']?%s*$', '')
 
-    local winMsg = string.format('/ao [ÌÏ] Ïîáåäèòåëåì ÌÏ "%s" ñòàë %s[%d]! Ïîçäðàâëÿåì!', mpName, nick, id)
+    local winMsg = string.format('/ao [МП] Победителем МП "%s" стал %s[%d]! Поздравляем!', mpName, nick, id)
     sampSendChat(winMsg)
 
-    addEventLog(string.format("Ïîáåäèòåëü: %s[%d] (ÌÏ: %s)", nick, id, mpName))
-    sendMsg(C.GREEN, string.format("Îáúÿâëåí ïîáåäèòåëü: %s[%d] íà ÌÏ \"%s\"!", nick, id, mpName))
+    addEventLog(string.format("Победитель: %s[%d] (МП: %s)", nick, id, mpName))
+    sendMsg(C.GREEN, string.format("Объявлен победитель: %s[%d] на МП \"%s\"!", nick, id, mpName))
 end
 
--- ==================== ÏÀÐÑÈÍÃ ÄÈÀËÎÃÎÂ ====================
+-- ==================== ПАРСИНГ ДИАЛОГОВ EVENTMENU ====================
 local Dialogs = {}
 
 function Dialogs.parseEvents(dialogText)
@@ -838,7 +844,7 @@ function Dialogs.parseEvents(dialogText)
     local line_idx = 0
     for line in dialogText:gmatch("[^\r\n]+") do
         local clean = cleanColorCodes(line)
-        if not clean:find("ID%s+Íàçâàíèå") then
+        if not clean:find("ID%s+Название") then
             local id_str, name = clean:match("%[(%d+)%]%s*(.-)[\t\r\n]*$")
             if id_str and name then
                 table.insert(Core.events_list, {
@@ -864,7 +870,7 @@ function Dialogs.parseToggles(dialogText)
 end
 
 function Dialogs.parseBroadcast(dialogText)
-    local msg = cleanColorCodes(dialogText):match("Ñîîáùåíèå íà âåñü ñåðâåð:\r?\n?(.-)\r?\n?\r?\n?Óêàæèòå íîâîå ñîîáùåíèå")
+    local msg = cleanColorCodes(dialogText):match("Сообщение на весь сервер:\r?\n?(.-)\r?\n?\r?\n?Укажите новое сообщение")
     return msg and msg:gsub("^%s*(.-)%s*$", "%1") or ""
 end
 
@@ -885,11 +891,11 @@ function Dialogs.parseRules(dialogText)
 end
 
 function Dialogs.parseWeapon(raw)
-    if not raw or raw:find("Íåò") then
+    if not raw or raw:find("Нет") then
         B.ev_weapon_sel[0] = 0
         return
     end
-    local name, count = raw:match("^(.-)%s*%[êîëè÷åñòâî:%s*(%d+)%]")
+    local name, count = raw:match("^(.-)%s*%[количество:%s*(%d+)%]")
     name = (name or raw:gsub("%[.-%]", "")):gsub("^%s*(.-)%s*$", "%1"):lower()
     if count then B.ev_ammo_count[0] = tonumber(count) end
 
@@ -905,29 +911,29 @@ end
 
 function Dialogs.loadSettings(text)
     local t = Dialogs.parseToggles(text)
-    if t["Íàçâàíèå"] then 
-        imgui.StrCopy(B.ev_new_title, u8(t["Íàçâàíèå"]))
+    if t["Название"] then 
+        imgui.StrCopy(B.ev_new_title, u8(t["Название"]))
     end
-    if t["Ëèìèò èãðîêîâ"] then B.ev_limit[0] = tonumber(t["Ëèìèò èãðîêîâ"]:match("%d+")) or B.ev_limit[0] end
-    if t["Âðåìÿ äåéñòâèÿ òåëåïîðòà"] then B.ev_tp_time[0] = tonumber(t["Âðåìÿ äåéñòâèÿ òåëåïîðòà"]:match("%d+")) or B.ev_tp_time[0] end
-    if t["Ïàðîëü äëÿ âõîäà"] then imgui.StrCopy(B.ev_password, t["Ïàðîëü äëÿ âõîäà"]:match("%d+") or "0") end
-    if t["Âûäàòü çäîðîâüå"] then B.ev_health[0] = tonumber(t["Âûäàòü çäîðîâüå"]:match("%d+")) or B.ev_health[0] end
-    if t["Âûäàòü áðîíþ"] then B.ev_armour[0] = tonumber(t["Âûäàòü áðîíþ"]:match("%d+")) or B.ev_armour[0] end
-    if t["Âûäàòü ñêèí"] then B.ev_skin[0] = tonumber(t["Âûäàòü ñêèí"]:match("%d+")) or B.ev_skin[0] end
+    if t["Лимит игроков"] then B.ev_limit[0] = tonumber(t["Лимит игроков"]:match("%d+")) or B.ev_limit[0] end
+    if t["Время действия телепорта"] then B.ev_tp_time[0] = tonumber(t["Время действия телепорта"]:match("%d+")) or B.ev_tp_time[0] end
+    if t["Пароль для входа"] then imgui.StrCopy(B.ev_password, t["Пароль для входа"]:match("%d+") or "0") end
+    if t["Выдать здоровье"] then B.ev_health[0] = tonumber(t["Выдать здоровье"]:match("%d+")) or B.ev_health[0] end
+    if t["Выдать броню"] then B.ev_armour[0] = tonumber(t["Выдать броню"]:match("%d+")) or B.ev_armour[0] end
+    if t["Выдать скин"] then B.ev_skin[0] = tonumber(t["Выдать скин"]:match("%d+")) or B.ev_skin[0] end
 
-    Dialogs.parseWeapon(t["Âûäàòü îðóæèå"])
+    Dialogs.parseWeapon(t["Выдать оружие"])
 
-    Opt.take_guns[0]   = (t["Îðóæèå ïðè òåëåïîðòå"] == "Îòîáðàòü")
-    Opt.re_tp[0]       = (t["Ïîâòîðíûé òåëåïîðò"] == "Ðàçðåø¸í")
-    Opt.launcher[0]    = (t["Äîñòóïíîñòü"] == "Òîëüêî ñ ëàóí÷åðà")
-    Opt.pvp_dmg[0]     = (t["Íàíåñåíèå óðîíà äðóãèì èãðîêàì"] == "Íåò")
-    Opt.guards[0]      = (t["Îõðàííèêè"] == "Íåò")
-    Opt.accessories[0] = (t["Ýôôåêòû îò àêñåññóàðîâ"] == "Äà")
-    Opt.lic_car[0]     = (t["Ëèöåíçèÿ íà àâòî"] == "Äà")
-    Opt.lic_moto[0]    = (t["Ëèöåíçèÿ íà ìîòî"] == "Äà")
-    Opt.lic_boat[0]    = (t["Ëèöåíçèÿ íà âîäíûé ÒÑ"] == "Äà")
-    Opt.lic_fly[0]     = (t["Ëèöåíçèÿ íà âîçäóøíûé ÒÑ"] == "Äà")
-    Opt.collision[0]   = (t["Êîëëèçèÿ èãðîêîâ"] == "Äà")
+    Opt.take_guns[0]   = (t["Оружие при телепорте"] == "Отобрать")
+    Opt.re_tp[0]       = (t["Повторный телепорт"] == "Разрешён")
+    Opt.launcher[0]    = (t["Доступность"] == "Только с лаунчера")
+    Opt.pvp_dmg[0]     = (t["Нанесение урона другим игрокам"] == "Нет")
+    Opt.guards[0]      = (t["Охранники"] == "Нет")
+    Opt.accessories[0] = (t["Эффекты от аксессуаров"] == "Да")
+    Opt.lic_car[0]     = (t["Лицензия на авто"] == "Да")
+    Opt.lic_moto[0]    = (t["Лицензия на мото"] == "Да")
+    Opt.lic_boat[0]    = (t["Лицензия на водный ТС"] == "Да")
+    Opt.lic_fly[0]     = (t["Лицензия на воздушный ТС"] == "Да")
+    Opt.collision[0]   = (t["Коллизия игроков"] == "Да")
 end
 
 local function waitForDialog(expected_id, timeout_ms)
@@ -949,53 +955,53 @@ end
 local function validateEventForm()
     local errs = {}
     if #Core.events_list == 0 or not Core.events_list[UI.selected_mp_idx[0] + 1] then
-        table.insert(errs, "Íå âûáðàíî ìåðîïðèÿòèå â âåðõíåì ñïèñêå ñåðâåðà")
+        table.insert(errs, "Не выбрано мероприятие в верхнем списке сервера")
     end
     local title = u8:decode(ffi.string(B.ev_new_title)):gsub("^%s*(.-)%s*$", "%1")
     if #title == 0 then
-        table.insert(errs, "Ïîëå 'Íàçâàíèå ÌÏ' ïóñòîå")
+        table.insert(errs, "Поле 'Название МП' пустое")
     elseif #title < 3 then
-        table.insert(errs, "Íàçâàíèå ÌÏ: ìèíèìóì 3 ñèìâîëà")
+        table.insert(errs, "Название МП: минимум 3 символа")
     end
 
     local ao = u8:decode(ffi.string(B.ev_broadcast)):gsub("^%s*(.-)%s*$", "%1")
     if #ao == 0 then
-        table.insert(errs, "Ïîëå 'Ñîîáùåíèå íà âåñü ñåðâåð' ïóñòîå")
+        table.insert(errs, "Поле 'Сообщение на весь сервер' пустое")
     elseif #ao < 5 then
-        table.insert(errs, "Ñîîáùåíèå ñåðâåðà: ìèíèìóì 5 ñèìâîëîâ")
+        table.insert(errs, "Сообщение сервера: минимум 5 символов")
     elseif #ao > 128 then
-        table.insert(errs, "Ñîîáùåíèå ñåðâåðà ñëèøêîì äëèííîå (ìàêñ. 128 ñèìâ.)")
+        table.insert(errs, "Сообщение сервера слишком длинное (макс. 128 симв.)")
     end
 
     if B.ev_limit[0] < 1 or B.ev_limit[0] > 1000 then
-        table.insert(errs, "Ëèìèò èãðîêîâ äîëæåí áûòü îò 1 äî 1000")
+        table.insert(errs, "Лимит игроков должен быть от 1 до 1000")
     end
     if B.ev_tp_time[0] < 1 or B.ev_tp_time[0] > 300 then
-        table.insert(errs, "Âðåìÿ òåëåïîðòà äîëæíî áûòü îò 1 äî 300 ñåê.")
+        table.insert(errs, "Время телепорта должно быть от 1 до 300 сек.")
     end
 
     local pass = ffi.string(B.ev_password)
     if #pass > 0 and (not pass:match("^%d+$") or #pass > 6) then
-        table.insert(errs, "Ïàðîëü: òîëüêî öèôðû (äî 6 çíàêîâ)")
+        table.insert(errs, "Пароль: только цифры (до 6 знаков)")
     end
     if B.ev_health[0] ~= 0 and (B.ev_health[0] < 5 or B.ev_health[0] > 250) then
-        table.insert(errs, "HP: óêàæèòå îò 5 äî 250 (èëè 0)")
+        table.insert(errs, "HP: укажите от 5 до 250 (или 0)")
     end
     if B.ev_armour[0] ~= 0 and (B.ev_armour[0] < 5 or B.ev_armour[0] > 250) then
-        table.insert(errs, "Áðîíÿ: óêàæèòå îò 5 äî 250 (èëè 0)")
+        table.insert(errs, "Броня: укажите от 5 до 250 (или 0)")
     end
     if B.ev_skin[0] ~= 0 and (B.ev_skin[0] < 1 or B.ev_skin[0] > 1120) then
-        table.insert(errs, "Ñêèí: ID îò 1 äî 1120 (èëè 0)")
+        table.insert(errs, "Скин: ID от 1 до 1120 (или 0)")
     end
     if B.ev_weapon_sel[0] > 0 and (B.ev_ammo_count[0] < 1 or B.ev_ammo_count[0] > 500) then
-        table.insert(errs, "Ïàòðîíû: îò 1 äî 500 øòóê")
+        table.insert(errs, "Патроны: от 1 до 500 штук")
     end
     return errs
 end
 
 function Core.applySettings()
     if Core.running or Core.fetching_settings then
-        HUD.show("validation_error", 3.0, { "Ïðåäûäóùàÿ îïåðàöèÿ åùå íå çàâåðøåíà" })
+        HUD.show("validation_error", 3.0, { "Предыдущая операция еще не завершена" })
         return
     end
 
@@ -1013,7 +1019,7 @@ function Core.applySettings()
         Core.active_dialog_id = -1
         sampSendChat("/eventmenu")
         if not waitForDialog(DIALOGS.EVENT_LIST, 3000) then
-            HUD.show("validation_error", 4.0, { "Íå óäàëîñü îòêðûòü ìåíþ ÌÏ (/eventmenu)" })
+            HUD.show("validation_error", 4.0, { "Не удалось открыть меню МП (/eventmenu)" })
             Core.running = false
             return
         end
@@ -1022,16 +1028,15 @@ function Core.applySettings()
         Core.active_dialog_id = -1
         sampSendDialogResponse(DIALOGS.EVENT_LIST, 1, current_mp.list_item, "")
         if not waitForDialog(DIALOGS.EVENT_EDIT, 3000) then
-            HUD.show("validation_error", 4.0, { "Íå óäàëîñü îòêðûòü ïàðàìåòðû âûáðàííîãî ÌÏ" })
+            HUD.show("validation_error", 4.0, { "Не удалось открыть параметры выбранного МП" })
             Core.running = false
             return
         end
 
         local cur = Dialogs.parseToggles(Core.active_dialog_text)
 
-        -- 1. Íàçâàíèå
         local title = u8:decode(ffi.string(B.ev_new_title))
-        if #title >= 3 and cur["Íàçâàíèå"] ~= title then
+        if #title >= 3 and cur["Название"] ~= title then
             Core.active_dialog_id = -1
             sampSendDialogResponse(DIALOGS.EVENT_EDIT, 1, 0, "")
             if waitForDialog(DIALOGS.EVENT_RENAME, 2000) then
@@ -1042,7 +1047,6 @@ function Core.applySettings()
             end
         end
 
-        -- 2. Ïðàâèëà
         local r1 = u8:decode(ffi.string(B.ev_rule1))
         local r2 = u8:decode(ffi.string(B.ev_rule2))
         local r3 = u8:decode(ffi.string(B.ev_rule3))
@@ -1071,7 +1075,6 @@ function Core.applySettings()
             end
         end
 
-        -- 3. Ñïàâíû
         if B.ev_sp_slot[0] > 0 then
             Core.active_dialog_id = -1
             sampSendDialogResponse(DIALOGS.EVENT_EDIT, 1, 2, "")
@@ -1113,7 +1116,6 @@ function Core.applySettings()
             end
         end
 
-        -- 4. Ñîîáùåíèå íà âåñü ñåðâåð
         local ao = u8:decode(ffi.string(B.ev_broadcast))
         if #ao >= 5 then
             Core.active_dialog_id = -1
@@ -1128,7 +1130,6 @@ function Core.applySettings()
 
         cur = Dialogs.parseToggles(Core.active_dialog_text)
 
-        -- 5. Áàçîâûå ïîëÿ
         local function syncField(row, expected_dialog, current_val, target_val)
             if current_val ~= target_val then
                 Core.active_dialog_id = -1
@@ -1142,29 +1143,28 @@ function Core.applySettings()
             end
         end
 
-        local cur_lim = cur["Ëèìèò èãðîêîâ"] and tonumber(cur["Ëèìèò èãðîêîâ"]:match("%d+"))
+        local cur_lim = cur["Лимит игроков"] and tonumber(cur["Лимит игроков"]:match("%d+"))
         syncField(4, DIALOGS.EVENT_LIMIT, cur_lim, B.ev_limit[0])
 
         local target_tpt = math.max(1, math.min(300, math.floor(B.ev_tp_time[0])))
-        local cur_tpt = cur["Âðåìÿ äåéñòâèÿ òåëåïîðòà"] and tonumber(cur["Âðåìÿ äåéñòâèÿ òåëåïîðòà"]:match("%d+"))
+        local cur_tpt = cur["Время действия телепорта"] and tonumber(cur["Время действия телепорта"]:match("%d+"))
         syncField(5, DIALOGS.EVENT_TP_TIME, cur_tpt, target_tpt)
 
         local pass = ffi.string(B.ev_password)
-        local cur_pass = cur["Ïàðîëü äëÿ âõîäà"] and (cur["Ïàðîëü äëÿ âõîäà"]:match("%d+") or "0")
+        local cur_pass = cur["Пароль для входа"] and (cur["Пароль для входа"]:match("%d+") or "0")
         if #pass > 0 and cur_pass ~= pass then
             syncField(6, DIALOGS.EVENT_PASSWORD, cur_pass, pass)
         end
 
-        local cur_hp = cur["Âûäàòü çäîðîâüå"] and tonumber(cur["Âûäàòü çäîðîâüå"]:match("%d+"))
+        local cur_hp = cur["Выдать здоровье"] and tonumber(cur["Выдать здоровье"]:match("%d+"))
         syncField(7, DIALOGS.EVENT_HEALTH, cur_hp, B.ev_health[0])
 
-        local cur_arm = cur["Âûäàòü áðîíþ"] and tonumber(cur["Âûäàòü áðîíþ"]:match("%d+"))
+        local cur_arm = cur["Выдать броню"] and tonumber(cur["Выдать броню"]:match("%d+"))
         syncField(8, DIALOGS.EVENT_ARMOUR, cur_arm, B.ev_armour[0])
 
-        local cur_sk = cur["Âûäàòü ñêèí"] and tonumber(cur["Âûäàòü ñêèí"]:match("%d+"))
+        local cur_sk = cur["Выдать скин"] and tonumber(cur["Выдать скин"]:match("%d+"))
         syncField(9, DIALOGS.EVENT_SKIN, cur_sk, B.ev_skin[0])
 
-        -- 6. Îðóæèå
         Core.active_dialog_id = -1
         sampSendDialogResponse(DIALOGS.EVENT_EDIT, 1, 10, "")
         if waitForDialog(DIALOGS.WEAPON_MENU, 2000) then
@@ -1196,19 +1196,18 @@ function Core.applySettings()
             waitReturnToEdit()
         end
 
-        -- 7. Ìîäèôèêàòîðû
         local toggles = {
-            { 11, "Îðóæèå ïðè òåëåïîðòå", Opt.take_guns[0] and "Îòîáðàòü" or "Íå îòáèðàòü" },
-            { 12, "Ïîâòîðíûé òåëåïîðò", Opt.re_tp[0] and "Ðàçðåø¸í" or "Çàïðåù¸í" },
-            { 13, "Äîñòóïíîñòü", Opt.launcher[0] and "Òîëüêî ñ ëàóí÷åðà" or "Ëþáîé êëèåíò" },
-            { 14, "Íàíåñåíèå óðîíà äðóãèì èãðîêàì", Opt.pvp_dmg[0] and "Íåò" or "Äà" },
-            { 15, "Ýôôåêòû îò àêñåññóàðîâ", Opt.accessories[0] and "Äà" or "Íåò" },
-            { 16, "Îõðàííèêè", Opt.guards[0] and "Íåò" or "Äà" },
-            { 17, "Ëèöåíçèÿ íà àâòî", Opt.lic_car[0] and "Äà" or "Íåò" },
-            { 18, "Ëèöåíçèÿ íà ìîòî", Opt.lic_moto[0] and "Äà" or "Íåò" },
-            { 19, "Ëèöåíçèÿ íà âîäíûé ÒÑ", Opt.lic_boat[0] and "Äà" or "Íåò" },
-            { 20, "Ëèöåíçèÿ íà âîçäóøíûé ÒÑ", Opt.lic_fly[0] and "Äà" or "Íåò" },
-            { 21, "Êîëëèçèÿ èãðîêîâ", Opt.collision[0] and "Äà" or "Íåò" }
+            { 11, "Оружие при телепорте", Opt.take_guns[0] and "Отобрать" or "Не отбирать" },
+            { 12, "Повторный телепорт", Opt.re_tp[0] and "Разрешён" or "Запрещён" },
+            { 13, "Доступность", Opt.launcher[0] and "Только с лаунчера" or "Любой клиент" },
+            { 14, "Нанесение урона другим игрокам", Opt.pvp_dmg[0] and "Нет" or "Да" },
+            { 15, "Эффекты от аксессуаров", Opt.accessories[0] and "Да" or "Нет" },
+            { 16, "Охранники", Opt.guards[0] and "Нет" or "Да" },
+            { 17, "Лицензия на авто", Opt.lic_car[0] and "Да" or "Нет" },
+            { 18, "Лицензия на мото", Opt.lic_moto[0] and "Да" or "Нет" },
+            { 19, "Лицензия на водный ТС", Opt.lic_boat[0] and "Да" or "Нет" },
+            { 20, "Лицензия на воздушный ТС", Opt.lic_fly[0] and "Да" or "Нет" },
+            { 21, "Коллизия игроков", Opt.collision[0] and "Да" or "Нет" }
         }
 
         for _, item in ipairs(toggles) do
@@ -1237,7 +1236,7 @@ function Core.fetchSettings()
     if not current_mp then return end
 
     Core.fetching_settings = true
-    sampAddChatMessage(string.format("{00FF00}[AMP]{FFFFFF} Çàãðóçêà äàííûõ ÌÏ #{FFFF00}%d{FFFFFF}...", current_mp.event_id), -1)
+    sampAddChatMessage(string.format("{00FF00}[AMP]{FFFFFF} Загрузка данных МП #{FFFF00}%d{FFFFFF}...", current_mp.event_id), -1)
 
     lua_thread.create(function()
         Core.active_dialog_id = -1
@@ -1317,7 +1316,7 @@ function Core.toggleEvent()
                     wait(400)
                     local broadcastText = generateBroadcastTemplate()
                     sampSendChat("/ao " .. broadcastText)
-                    addEventLog("Çàïóñê ÌÏ: îòïðàâëåíî ñîîáùåíèå â /ao")
+                    addEventLog("Запуск МП: отправлено сообщение в /ao")
                 end
             end
         end
@@ -1332,23 +1331,23 @@ end
 
 local function announceRules(mpKey)
     local lines = MP_RULES[mpKey]
-    if not lines or #lines == 0 then return sendMsg(C.WARN, "Ñïèñîê ïðàâèë ïóñò!") end
+    if not lines or #lines == 0 then return sendMsg(C.WARN, "Список правил пуст!") end
     if TH.rules and TH.rules:status() ~= "dead" then
-        return sendMsg(C.WARN, "Îçâó÷êà ïðàâèë óæå âûïîëíÿåòñÿ!")
+        return sendMsg(C.WARN, "Озвучка правил уже выполняется!")
     end
     TH.rules = lua_thread.create(function()
-        sendMsg(C.GREEN, "Íà÷àòà îçâó÷êà ïðàâèë ìåðîïðèÿòèÿ â /smp...")
+        sendMsg(C.GREEN, "Начата озвучка правил мероприятия в /smp...")
         for _, line in ipairs(lines) do
             sampSendChat("/smp " .. line, -1)
             wait(1300)
         end
-        sendMsg(C.GREEN, "Îçâó÷êà ïðàâèë óñïåøíî çàâåðøåíà.")
+        sendMsg(C.GREEN, "Озвучка правил успешно завершена.")
         TH.rules = nil
     end)
 end
 
 local function DrawRulesEditor(mpKey)
-    if not imgui.CollapsingHeader(u8"Ðåäàêòèðîâàòü ïðàâèëà îçâó÷êè (/smp)") then return end
+    if not imgui.CollapsingHeader(u8"Редактировать правила озвучки (/smp)") then return end
     imgui.Indent(10)
     imgui.Spacing()
 
@@ -1373,12 +1372,12 @@ local function DrawRulesEditor(mpKey)
     end
 
     imgui.Spacing()
-    if imgui.Button(u8"+ Äîáàâèòü ñòðîêó##add_" .. mpKey, imgui.ImVec2(150, 24)) then
-        table.insert(bufs, imgui.new.char[256](u8"Íîâîå ïðàâèëî"))
+    if imgui.Button(u8"+ Добавить строку##add_" .. mpKey, imgui.ImVec2(150, 24)) then
+        table.insert(bufs, imgui.new.char[256](u8"Новое правило"))
     end
     imgui.SameLine()
 
-    if imgui.Button(u8"Ñîõðàíèòü ïðàâèëà â êîíôèã##save_rl_" .. mpKey, imgui.ImVec2(200, 24)) then
+    if imgui.Button(u8"Сохранить правила в конфиг##save_rl_" .. mpKey, imgui.ImVec2(200, 24)) then
         MP_RULES[mpKey] = {}
         for _, b in ipairs(bufs) do
             local str = u8:decode(ffi.string(b)):gsub("^%s*(.-)%s*$", "%1")
@@ -1387,11 +1386,11 @@ local function DrawRulesEditor(mpKey)
             end
         end
         saveConfig()
-        sendMsg(C.GREEN, "Ïðàâèëà äëÿ ÌÏ óñïåøíî ñîõðàíåíû â êîíôèã!")
+        sendMsg(C.GREEN, "Правила для МП успешно сохранены в конфиг!")
     end
     imgui.SameLine()
 
-    if imgui.Button(u8"Ñáðîñèòü ïî óìîë÷àíèþ##rst_rl_" .. mpKey, imgui.ImVec2(160, 24)) then
+    if imgui.Button(u8"Сбросить по умолчанию##rst_rl_" .. mpKey, imgui.ImVec2(160, 24)) then
         if DEFAULT_MP_RULES[mpKey] then
             MP_RULES[mpKey] = {}
             bufs = {}
@@ -1401,7 +1400,7 @@ local function DrawRulesEditor(mpKey)
             end
             RuleEditBuffers[mpKey] = bufs
             saveConfig()
-            sendMsg(C.WARN, "Ïðàâèëà ñáðîøåíû ê ñòàíäàðòíûì è ñîõðàíåíû.")
+            sendMsg(C.WARN, "Правила сброшены к стандартным и сохранены.")
         end
     end
 
@@ -1424,10 +1423,10 @@ local function punishViolator(id, reasonType, reasonPm, reasonSmp)
         wait(400)
         sampSendChat(string.format("/pm %d 1 %s", id, reasonPm))
         wait(400)
-        sampSendChat(string.format("/smp %s áûë äèñêâàëèôèöèðîâàí çà %s íà ìåðîïðèÿòèè!", nick, reasonSmp))
+        sampSendChat(string.format("/smp %s был дисквалифицирован за %s на мероприятии!", nick, reasonSmp))
         wait(400)
-        sampSendChat("/weap " .. id .. " Íàðóøåíèå Ïðàâèë ÌÏ")
-        addEventLog(string.format("Äèñêâàëèôèêàöèÿ (%s): %s[%d]", reasonType, nick, id))
+        sampSendChat("/weap " .. id .. " Нарушение Правил МП")
+        addEventLog(string.format("Дисквалификация (%s): %s[%d]", reasonType, nick, id))
     end)
 end
 
@@ -1437,7 +1436,7 @@ local function spawnAndNotify(target, pmType, pmText, customDelay)
     sampSendChat("/spplayer " .. nick, -1)
     wait(500)
     sampSendChat(string.format("/pm %s %d %s", nick, pmType or 1, pmText or ""), -1)
-    addEventLog(string.format("Ñïàâí (%s): %s", pmText or "Íàðóøåíèå", nick))
+    addEventLog(string.format("Спавн (%s): %s", pmText or "Нарушение", nick))
     wait(math.floor((customDelay or CFG.SPAWN_CD) * 1000))
 end
 
@@ -1446,23 +1445,23 @@ local function runAntiMaskScan()
         local chars = getAllChars()
         local count = 0
         if #chars > 1 then
-            sendMsg(C.WARN, "Ñêàíèðîâàíèå èãðîêîâ íà íàëè÷èå ìàñîê...")
+            sendMsg(C.WARN, "Сканирование игроков на наличие масок...")
             for _, ped in ipairs(chars) do
                 if ped ~= PLAYER_PED and doesCharExist(ped) then
                     local res, id = sampGetPlayerIdByCharHandle(ped)
                     if res and sampIsPlayerConnected(id) and not isPlayerBlacklisted(id) and id ~= st.myId then
                         local color = sampGetPlayerColor(id)
                         if color == CFG.MASK_COLOR then
-                            punishViolator(id, "MASK", "Ìàñêè çàïðåùåíû íà ìåðîïðèÿòèè", "èñïîëüçîâàíèå ìàñêè")
+                            punishViolator(id, "MASK", "Маски запрещены на мероприятии", "использование маски")
                             count = count + 1
                             wait(1200)
                         end
                     end
                 end
             end
-            sendMsg(C.GREEN, string.format("Ïðîâåðêà çàâåðøåíà. Çàñïàâíåíî â ìàñêàõ: %d", count))
+            sendMsg(C.GREEN, string.format("Проверка завершена. Заспавнено в масках: %d", count))
         else
-            sendMsg(C.WARN, "Ðÿäîì íåò èãðîêîâ!")
+            sendMsg(C.WARN, "Рядом нет игроков!")
         end
     end)
 end
@@ -1495,7 +1494,7 @@ local function tolower(str)
             bytes[i] = 229
         end
     end
-    return string.char(unpack(bytes)):gsub("¸", "å")
+    return string.char(unpack(bytes)):gsub("ё", "е")
 end
 
 local function isPointInPoly(x, y, poly)
@@ -1604,21 +1603,21 @@ local function showAimCursor(enable)
     st.cursorActive = enable
 end
 
--- ==================== ÌÏ ÄÅÐÁÈ ====================
+-- ==================== МП ДЕРБИ ====================
 local function toggleDerby()
     if st.derbyActive then
         TH.derby = terminateThread(TH.derby)
         st.derbyActive = false
         st.derbyPlayersWithVeh = {}
-        return sendMsg(C.WARN, "ÌÏ 'Äåðáè' îñòàíîâëåíî!")
+        return sendMsg(C.WARN, "МП 'Дерби' остановлено!")
     end
     if st.derbyCheckInt and getActiveInterior() ~= st.derbyIntId then
-        return sendMsg(C.RED, string.format("ÌÏ 'Äåðáè' ïðèâÿçàíî ê èíòåðüåðó 85! (Òåêóùèé: %d)", getActiveInterior()))
+        return sendMsg(C.RED, string.format("МП 'Дерби' привязано к интерьеру 85! (Текущий: %d)", getActiveInterior()))
     end
     st.derbyActive = true
     st.derbyPlayersWithVeh = {}
-    sendMsg(C.GREEN, "ÌÏ 'Äåðáè' óñïåøíî çàïóùåíî!")
-    addEventLog("Çàïóñê ÌÏ Äåðáè")
+    sendMsg(C.GREEN, "МП 'Дерби' успешно запущено!")
+    addEventLog("Запуск МП Дерби")
     TH.derby = lua_thread.create(function()
         local lastVehGiveTime = 0
         local handled = {}
@@ -1626,8 +1625,8 @@ local function toggleDerby()
             wait(200)
             if st.derbyCheckInt and getActiveInterior() ~= st.derbyIntId then
                 st.derbyActive = false
-                sendMsg(C.RED, "Âû ïîêèíóëè èíòåðüåð 85! Äåðáè âûêëþ÷åíî.")
-                addEventLog("Âûõîä èç èíòåðüåðà, Äåðáè îòêëþ÷åíî.")
+                sendMsg(C.RED, "Вы покинули интерьер 85! Дерби выключено.")
+                addEventLog("Выход из интерьера, Дерби отключено.")
                 break
             end
             if st.derbyAutoGiveVeh and (os.clock() - lastVehGiveTime > 4.0) then
@@ -1639,7 +1638,7 @@ local function toggleDerby()
                         local chosen_car_id = (st.derbyGiveMode == 0) and cars_list[math.random(1, #cars_list)] or (cars_list[st.derbySelectedCar + 1] or 400)
                         sampSendChat(string.format("/plveh %s %d 0", nick, chosen_car_id))
                         st.derbyPlayersWithVeh[nick] = true
-                        addEventLog(string.format("Âûäàíî àâòî [%d] èãðîêó %s", chosen_car_id, nick))
+                        addEventLog(string.format("Выдано авто [%d] игроку %s", chosen_car_id, nick))
                         wait(600)
                     end
                 end
@@ -1655,7 +1654,7 @@ local function toggleDerby()
                         local exist, curPed = sampGetCharHandleBySampPlayerId(id)
                         if exist and doesCharExist(curPed) and not isCharInAnyCar(curPed) and not handled[id] then
                             handled[id] = true
-                            spawnAndNotify(nick, 0, "Âû áûëè çàñïàâíåíû: îñòàëèñü áåç ìàøèíû íà Äåðáè!")
+                            spawnAndNotify(nick, 0, "Вы были заспавнены: остались без машины на Дерби!")
                         end
                     else
                         local car = storeCarCharIsInNoSave(ped)
@@ -1667,7 +1666,7 @@ local function toggleDerby()
                                 local curCar = storeCarCharIsInNoSave(curPed)
                                 if doesVehicleExist(curCar) and getCarHealth(curCar) <= st.derbyHpThreshold then
                                     handled[id] = true
-                                    spawnAndNotify(nick, 0, string.format("Âû âûáûëè: ïîâðåæäåíèÿ àâòî (ìåíüøå %d HP)!", st.derbyHpThreshold))
+                                    spawnAndNotify(nick, 0, string.format("Вы выбыли: повреждения авто (меньше %d HP)!", st.derbyHpThreshold))
                                 end
                             end
                         end
@@ -1679,7 +1678,7 @@ local function toggleDerby()
     end)
 end
 
--- ==================== 3D ÐÅÍÄÅÐ ====================
+-- ==================== 3D РЕНДЕР ====================
 local function drawHUD(curTime)
     local hX, hY, moversCount = screenW - 220, 180, 0
     for id, exp in pairs(st.movers) do
@@ -1687,16 +1686,16 @@ local function drawHUD(curTime)
             moversCount = moversCount + 1
             local sx, sy = getPedScreenPos(id)
             if sx and sy then
-                local len = renderGetFontDrawTextLength(fontText, "ñäåëàë äâèæåíèå")
-                renderFontDrawText(fontText, "ñäåëàë äâèæåíèå", sx - (len / 2), sy, C.YELLOW)
+                local len = renderGetFontDrawTextLength(fontText, "сделал движение")
+                renderFontDrawText(fontText, "сделал движение", sx - (len / 2), sy, C.YELLOW)
             end
         else
             st.movers[id] = nil
         end
     end
     renderDrawBox(hX - 10, hY - 5, 200, 50, C.ARGB_HUD)
-    renderFontDrawText(fontHUD, st.isGreen and "ÇÅËÅÍÛÉ ÑÂÅÒ" or "ÊÐÀÑÍÛÉ ÑÂÅÒ", hX, hY, st.isGreen and C.ARGB_G or C.ARGB_R)
-    renderFontDrawText(fontText, "Íàðóøèòåëåé: " .. moversCount, hX, hY + 22, C.WHITE)
+    renderFontDrawText(fontHUD, st.isGreen and "ЗЕЛЕНЫЙ СВЕТ" or "КРАСНЫЙ СВЕТ", hX, hY, st.isGreen and C.ARGB_G or C.ARGB_R)
+    renderFontDrawText(fontText, "Нарушителей: " .. moversCount, hX, hY + 22, C.WHITE)
 end
 
 local function drawDMHUD()
@@ -1711,7 +1710,7 @@ local function drawDMHUD()
     local hX, hY = screenW - 250, 240
     local height = 48 + math.min(#list, 3) * 20
     renderDrawBox(hX - 10, hY - 5, 230, height, C.ARGB_HUD)
-    renderFontDrawText(fontHUD, string.format("ÒÎÏ-3 DM [%02d:%02d]", mins, secs), hX, hY, C.ARGB_MP)
+    renderFontDrawText(fontHUD, string.format("ТОП-3 DM [%02d:%02d]", mins, secs), hX, hY, C.ARGB_MP)
     for i = 1, math.min(#list, 3) do
         local p = list[i]
         local str = string.format("%d. %s[%d]: %d", i, p.nick, p.id, p.kills)
@@ -1737,10 +1736,10 @@ local function drawZones()
         local act = st.active[id] == true
         if (act or st.showInact) and getDistanceBetweenCoords3d(cx, cy, cz, zone.center.x, zone.center.y, zone.center.z) <= CFG.DIST then
             local pts, occ = zone.points, st.occupied[id]
-            local col, txt, tCol = C.ARGB_IN, string.format("Ìåñòî #%d (Íåàêòèâíà)", id), C.TXT_INACT
+            local col, txt, tCol = C.ARGB_IN, string.format("Место #%d (Неактивна)", id), C.TXT_INACT
             if act then
                 col = occ and C.ARGB_R or C.ARGB_G
-                txt = occ and string.format("Ìåñòî #%d çàíÿòî %s[%d]", id, occ.nick, occ.id) or string.format("Ñâîáîäíîå ìåñòî #%d", id)
+                txt = occ and string.format("Место #%d занято %s[%d]", id, occ.nick, occ.id) or string.format("Свободное место #%d", id)
                 tCol = occ and C.TXT_BUSY or C.TXT_FREE
             end
             for k = 1, 4 do
@@ -1767,7 +1766,7 @@ local function drawSectorsAndSTZone()
             end
             local _, sx, sy, sz = convert3DCoordsToScreenEx(sec.center.x, sec.center.y, sec.center.z + 0.5)
             if sz and sz > 0 and sx and sy then
-                local str = "Ñåêòîð " .. name
+                local str = "Сектор " .. name
                 local len = renderGetFontDrawTextLength(fontSector, str)
                 renderFontDrawText(fontSector, str, sx - (len / 2), sy, C.WHITE)
             end
@@ -1783,7 +1782,7 @@ local function drawSectorsAndSTZone()
             end
             local _, sx, sy, sz = convert3DCoordsToScreenEx(sec.center.x, sec.center.y, sec.center.z + 0.5)
             if sz and sz > 0 and sx and sy then
-                local str = "Îáùàÿ çîíà ÌÏ"
+                local str = "Общая зона МП"
                 local len = renderGetFontDrawTextLength(fontSector, str)
                 renderFontDrawText(fontSector, str, sx - (len / 2), sy, C.WHITE)
             end
@@ -1791,54 +1790,54 @@ local function drawSectorsAndSTZone()
     end
     if st.sectorSetupMode then
         local curLetter = SECTOR_NAMES[st.setupSectorIdx] or "?"
-        local status = st.cursorActive and "{00FF00}Êóðñîð àêòèâåí (ËÊÌ - ñîõðàíèòü òî÷êó){FFFFFF}" or "{FFCC00}Íàæìèòå ÑÊÌ (êîëåñî) äëÿ êóðñîðà{FFFFFF}"
-        local infoText = string.format("Ðàçìåòêà: Ñåêòîð %s [%d/3] | %s", curLetter, #st.setupPoints, status)
+        local status = st.cursorActive and "{00FF00}Курсор активен (ЛКМ - сохранить точку){FFFFFF}" or "{FFCC00}Нажмите СКМ (колесо) для курсора{FFFFFF}"
+        local infoText = string.format("Разметка: Сектор %s [%d/3] | %s", curLetter, #st.setupPoints, status)
         local boxW = 550
         renderDrawBox(screenW / 2 - (boxW / 2), 40, boxW, 30, C.ARGB_HUD)
         renderFontDrawText(fontText, infoText, screenW / 2 - (boxW / 2) + 10, 47, C.WHITE)
         for i, pt in ipairs(st.setupPoints) do
             local _, sx, sy, sz = convert3DCoordsToScreenEx(pt.x, pt.y, pt.z + 0.5)
             if sz and sz > 0 and sx and sy then
-                renderFontDrawText(fontText, string.format("Òî÷êà #%d", i), sx, sy, C.YELLOW)
+                renderFontDrawText(fontText, string.format("Точка #%d", i), sx, sy, C.YELLOW)
             end
         end
     end
     if st.stZoneSetupMode then
-        local status = st.cursorActive and "{00FF00}Êóðñîð àêòèâåí (ËÊÌ - ñîõðàíèòü òî÷êó){FFFFFF}" or "{FFCC00}Íàæìèòå ÑÊÌ (êîëåñî) äëÿ êóðñîðà{FFFFFF}"
-        local infoText = string.format("Ðàçìåòêà: ÎÁÙÀß ÇÎÍÀ ÌÏ [%d/3] | %s", #st.stZonePoints, status)
+        local status = st.cursorActive and "{00FF00}Курсор активен (ЛКМ - сохранить точку){FFFFFF}" or "{FFCC00}Нажмите СКМ (колесо) для курсора{FFFFFF}"
+        local infoText = string.format("Разметка: ОБЩАЯ ЗОНА МП [%d/3] | %s", #st.stZonePoints, status)
         local boxW = 550
         renderDrawBox(screenW / 2 - (boxW / 2), 40, boxW, 30, C.ARGB_HUD)
         renderFontDrawText(fontText, infoText, screenW / 2 - (boxW / 2) + 10, 47, C.WHITE)
         for i, pt in ipairs(st.stZonePoints) do
             local _, sx, sy, sz = convert3DCoordsToScreenEx(pt.x, pt.y, pt.z + 0.5)
             if sz and sz > 0 and sx and sy then
-                renderFontDrawText(fontText, string.format("Óãîë àðåíû #%d", i), sx, sy, C.ARGB_ZONE)
+                renderFontDrawText(fontText, string.format("Угол арены #%d", i), sx, sy, C.ARGB_ZONE)
             end
         end
     end
 end
 
--- ==================== ÌÅÐÎÏÐÈßÒÈß ====================
+-- ==================== МЕРОПРИЯТИЯ ====================
 local function toggleRLGL()
     st.enabled = not st.enabled
     st.isGreen, st.movers, st.queue, st.inQueue = st.enabled, {}, {}, {}
     if st.enabled then st.curInt = getActiveInterior() end
-    sendMsg(st.enabled and C.GREEN or C.RED, st.enabled and "Ñâåòîôîð ÂÊËÞ×ÅÍ." or "Ñâåòîôîð ÂÛÊËÞ×ÅÍ.")
+    sendMsg(st.enabled and C.GREEN or C.RED, st.enabled and "Светофор ВКЛЮЧЕН." or "Светофор ВЫКЛЮЧЕН.")
 end
 
 local function sendRLGLSignal(isGreenSignal)
-    if not st.enabled then return sendMsg(C.WARN, "Ñíà÷àëà âêëþ÷èòå Ñâåòîôîð!") end
-    sampSendChat("/smp " .. (isGreenSignal and "Çåëåíûé ñâåò" or "Êðàñíûé ñâåò"), -1)
+    if not st.enabled then return sendMsg(C.WARN, "Сначала включите Светофор!") end
+    sampSendChat("/smp " .. (isGreenSignal and "Зеленый свет" or "Красный свет"), -1)
 end
 
 local function applyChairsZones(rangeStr)
-    if rangeStr == "" then return sendMsg(C.WARN, "Óêàæèòå íîìåðà ìåñò!") end
+    if rangeStr == "" then return sendMsg(C.WARN, "Укажите номера мест!") end
     local c = 0
     for _, id in ipairs(parseRange(rangeStr)) do
         if pZones[id] then st.selected[id], st.active[id], c = true, true, c + 1 end
     end
     st.chairs = true
-    sendMsg(C.GREEN, "Àêòèâèðîâàíî ìåñò: " .. c)
+    sendMsg(C.GREEN, "Активировано мест: " .. c)
 end
 
 local function removeChairsZones(rangeStr)
@@ -1847,30 +1846,30 @@ local function removeChairsZones(rangeStr)
     for _, id in ipairs(parseRange(rangeStr)) do
         if st.active[id] then st.active[id], c = nil, c + 1 end
     end
-    sendMsg(C.RED, "Äåàêòèâèðîâàíî ìåñò: " .. c)
+    sendMsg(C.RED, "Деактивировано мест: " .. c)
 end
 
 local function resetChairsZones()
     st.selected, st.active, st.occupied, st.chairs, st.showInact = {}, {}, {}, false, true
-    sendMsg(C.WARN, "Ñáðîñ âñåõ çîí ñòóëü÷èêîâ âûïîëíåí.")
+    sendMsg(C.WARN, "Сброс всех зон стульчиков выполнен.")
 end
 
 local function toggleStulGame()
     if st.stulActive then
         TH.stul = terminateThread(TH.stul)
         st.stulActive = false
-        return sendMsg(C.WARN, "ÌÏ 'Ñòóëü÷èêè' îñòàíîâëåíî!")
+        return sendMsg(C.WARN, "МП 'Стульчики' остановлено!")
     end
     local initialActive = 0
     for _ in pairs(st.active) do initialActive = initialActive + 1 end
-    if initialActive == 0 then return sendMsg(C.WARN, "Ñíà÷àëà àêòèâèðóéòå ìåñòà ÷åðåç çîíû!") end
+    if initialActive == 0 then return sendMsg(C.WARN, "Сначала активируйте места через зоны!") end
     TH.stul = lua_thread.create(function()
         st.stulActive = true
-        sampSendChat("/smp Ñòàðò")
+        sampSendChat("/smp Старт")
         local startTime = os.clock()
         local waitTime = math.random(10, 30)
         while os.clock() - startTime < waitTime do wait(100) end
-        sampSendChat("/smp Ñòîï")
+        sampSendChat("/smp Стоп")
         while true do
             wait(100)
             local curActive, curOccupied = 0, 0
@@ -1899,19 +1898,19 @@ local function toggleStulGame()
             for i = 1, #losers, 2 do
                 local p1, p2 = losers[i], losers[i + 1]
                 if p2 then
-                    sampSendChat(string.format("/smp %s[%d], %s[%d] íå óñïåë çàíÿòü ñòóëü÷èêè!", p1.nick, p1.id, p2.nick, p2.id))
+                    sampSendChat(string.format("/smp %s[%d], %s[%d] не успел занять стульчики!", p1.nick, p1.id, p2.nick, p2.id))
                 else
-                    sampSendChat(string.format("/smp %s[%d] íå óñïåë çàíÿòü ñòóëü÷èêè!", p1.nick, p1.id))
+                    sampSendChat(string.format("/smp %s[%d] не успел занять стульчики!", p1.nick, p1.id))
                 end
                 wait(1500)
             end
             for _, player in ipairs(losers) do
                 if sampIsPlayerConnected(player.id) then
-                    spawnAndNotify(player.nick, 1, "Âû íå óñïåëè çàíÿòü ñòóëü÷èê, âû âûáûëè ñ ÌÏ!")
+                    spawnAndNotify(player.nick, 1, "Вы не успели занять стульчик, вы выбыли с МП!")
                 end
             end
         else
-            sendMsg(C.GREEN, "Âñå óñïåëè çàíÿòü ñòóëü÷èêè!")
+            sendMsg(C.GREEN, "Все успели занять стульчики!")
         end
 
         st.stulActive = false
@@ -1920,39 +1919,39 @@ local function toggleStulGame()
 end
 
 local function toggleSectorSetup()
-    if st.stZoneSetupMode then return sendMsg(C.WARN, "Ñíà÷àëà çàâåðøèòå íàñòðîéêó Îáùåé Çîíû!") end
+    if st.stZoneSetupMode then return sendMsg(C.WARN, "Сначала завершите настройку Общей Зоны!") end
     if st.sectorSetupMode then
         st.sectorSetupMode = false
         st.setupPoints = {}
         showAimCursor(false)
-        return sendMsg(C.WARN, "Ðåæèì íàñòðîéêè ñåêòîðîâ âûêëþ÷åí.")
+        return sendMsg(C.WARN, "Режим настройки секторов выключен.")
     end
     local nextIdx = findNextFreeSectorIdx()
     if nextIdx > 4 then
-        return sendMsg(C.WARN, "Âñå 4 ñåêòîðà (A, B, C, D) óæå ñîçäàíû!")
+        return sendMsg(C.WARN, "Все 4 сектора (A, B, C, D) уже созданы!")
     end
     st.sectorSetupMode = true
     st.setupSectorIdx = nextIdx
     st.setupPoints = {}
     showAimCursor(false)
-    sendMsg(C.GREEN, "Ðàçìåòêà ñåêòîðîâ âêëþ÷åíà!")
-    sendMsg(C.WHITE, "Íàæìèòå {FFFF00}ÑÊÌ{FFFFFF} — êóðñîð, çàòåì {00FF00}ËÊÌ{FFFFFF} — ñòàâèòü òî÷êó (3 òî÷êè).")
-    sendMsg(C.WARN, string.format("Ðàçìå÷àåì Ñåêòîð %s (Òî÷êà 1/3)", SECTOR_NAMES[st.setupSectorIdx]))
+    sendMsg(C.GREEN, "Разметка секторов включена!")
+    sendMsg(C.WHITE, "Нажмите {FFFF00}СКМ{FFFFFF} — курсор, затем {00FF00}ЛКМ{FFFFFF} — ставить точку (3 точки).")
+    sendMsg(C.WARN, string.format("Размечаем Сектор %s (Точка 1/3)", SECTOR_NAMES[st.setupSectorIdx]))
 end
 
 local function toggleStZoneSetup()
-    if st.sectorSetupMode then return sendMsg(C.WARN, "Ñíà÷àëà çàâåðøèòå íàñòðîéêó ñåêòîðîâ!") end
+    if st.sectorSetupMode then return sendMsg(C.WARN, "Сначала завершите настройку секторов!") end
     if st.stZoneSetupMode then
         st.stZoneSetupMode = false
         st.stZonePoints = {}
         showAimCursor(false)
-        return sendMsg(C.WARN, "Ðåæèì ðàçìåòêè îáùåé çîíû âûêëþ÷åí.")
+        return sendMsg(C.WARN, "Режим разметки общей зоны выключен.")
     end
     st.stZoneSetupMode = true
     st.stZonePoints = {}
     showAimCursor(false)
-    sendMsg(C.GREEN, "Ðàçìåòêà ÎÁÙÅÉ ÇÎÍÛ ÌÏ âêëþ÷åíà!")
-    sendMsg(C.WHITE, "Íàæìèòå {FFFF00}ÑÊÌ{FFFFFF} — êóðñîð. Ïîñòàâüòå 3 óãëîâûå òî÷êè ÷åðåç {00FF00}ËÊÌ{FFFFFF}.")
+    sendMsg(C.GREEN, "Разметка ОБЩЕЙ ЗОНЫ МП включена!")
+    sendMsg(C.WHITE, "Нажмите {FFFF00}СКМ{FFFFFF} — курсор. Поставьте 3 угловые точки через {00FF00}ЛКМ{FFFFFF}.")
 end
 
 local function deleteSector(secName)
@@ -1960,35 +1959,35 @@ local function deleteSector(secName)
     if secName ~= "" and st.sectors[secName] then
         st.sectors[secName] = nil
         saveConfig()
-        sendMsg(C.RED, string.format("Ñåêòîð %s óäàëåí!", secName))
+        sendMsg(C.RED, string.format("Сектор %s удален!", secName))
         if st.sectorSetupMode then
             st.setupSectorIdx = findNextFreeSectorIdx()
             st.setupPoints = {}
             showAimCursor(false)
         end
     else
-        sendMsg(C.WARN, "Ñåêòîð íå íàéäåí!")
+        sendMsg(C.WARN, "Сектор не найден!")
     end
 end
 
 local function runSectorRound(isOneSafe, forcedSector)
-    if st.sectorRoundRun then return sendMsg(C.WARN, "Ðàóíä ñåêòîðîâ óæå èäåò!") end
-    if not st.stZone then return sendMsg(C.RED, "Ñíà÷àëà çàäàéòå îáùóþ çîíó ÌÏ ÷åðåç ðàçìåòêó!") end
+    if st.sectorRoundRun then return sendMsg(C.WARN, "Раунд секторов уже идет!") end
+    if not st.stZone then return sendMsg(C.RED, "Сначала задайте общую зону МП через разметку!") end
     local count = 0
     for _, n in ipairs(SECTOR_NAMES) do
         if st.sectors[n] then count = count + 1 end
     end
-    if count < 4 then return sendMsg(C.RED, "Ñíà÷àëà ñîçäàéòå âñå 4 ñåêòîðà (A, B, C, D)!") end
+    if count < 4 then return sendMsg(C.RED, "Сначала создайте все 4 сектора (A, B, C, D)!") end
     local chosenSector = forcedSector or SECTOR_NAMES[math.random(1, 4)]
     st.sectorRoundRun = true
     TH.sector = lua_thread.create(function()
         if isOneSafe then
-            sampSendChat(string.format("/smp 3 ñåêòîðà çàðàæåíû, áåçîïàñíûé ñåêòîð %s", chosenSector), -1)
+            sampSendChat(string.format("/smp 3 сектора заражены, безопасный сектор %s", chosenSector), -1)
         else
-            sampSendChat(string.format("/smp 3 ñåêòîðà áåçîïàñíû, çàðàæåííûé ñåêòîð %s", chosenSector), -1)
+            sampSendChat(string.format("/smp 3 сектора безопасны, зараженный сектор %s", chosenSector), -1)
         end
         wait(1000)
-        sampSendChat("/smp Ó âàñ åñòü 3 ñåêóíäû, ÷òîáû ñïàñòèñü", -1)
+        sampSendChat("/smp У вас есть 3 секунды, чтобы спастись", -1)
         wait(3000)
         local losers = {}
         local zonePoly = st.stZone.points
@@ -2019,13 +2018,13 @@ local function runSectorRound(isOneSafe, forcedSector)
                 end
             end
         end
-        sendMsg(C.WARN, string.format("Âûáûëî èãðîêîâ: %d. Íà÷àò ñïàâí...", #losers))
+        sendMsg(C.WARN, string.format("Выбыло игроков: %d. Начат спавн...", #losers))
         for _, loser in ipairs(losers) do
             if sampIsPlayerConnected(loser.id) then
-                spawnAndNotify(loser.nick, 1, "Âû íå óñïåëè ïîêèíóòü çàðàæåííûé ñåêòîð", CFG.SECTOR_SPAWN_CD)
+                spawnAndNotify(loser.nick, 1, "Вы не успели покинуть зараженный сектор", CFG.SECTOR_SPAWN_CD)
             end
         end
-        sendMsg(C.GREEN, "Ðàóíä ñåêòîðîâ óñïåøíî çàâåðøåí!")
+        sendMsg(C.GREEN, "Раунд секторов успешно завершен!")
         st.sectorRoundRun = false
         TH.sector = nil
     end)
@@ -2035,7 +2034,7 @@ local function toggleDM()
     if st.dmActive then
         TH.dmTimer = terminateThread(TH.dmTimer)
         st.dmActive, st.dmPlayers, st.dmRespawnQueue, st.dmInRespawn = false, {}, {}, {}
-        return sendMsg(C.WARN, "ÌÏ 'DeathMatch' îñòàíîâëåíî äîñðî÷íî!")
+        return sendMsg(C.WARN, "МП 'DeathMatch' остановлено досрочно!")
     end
     st.dmActive, st.dmPlayers, st.dmRespawnQueue, st.dmInRespawn = true, {}, {}, {}
     st.dmTimerEnd = os.clock() + 600.0
@@ -2047,7 +2046,7 @@ local function toggleDM()
             count = count + 1
         end
     end
-    sendMsg(C.GREEN, string.format("ÌÏ 'DeathMatch' çàïóùåíî íà 10 ìèíóò! Èãðîêîâ: %d", count))
+    sendMsg(C.GREEN, string.format("МП 'DeathMatch' запущено на 10 минут! Игроков: %d", count))
     TH.dmTimer = lua_thread.create(function()
         while st.dmActive and os.clock() < st.dmTimerEnd do wait(200) end
         if st.dmActive then
@@ -2058,13 +2057,13 @@ local function toggleDM()
                 end
             end
             if bestPlayer then
-                sampSendChat(string.format("/smp Âðåìÿ âûøëî, ïîáåäèòåëü - %s[%d]", bestPlayer.nick, bestPlayer.id), -1)
+                sampSendChat(string.format("/smp Время вышло, победитель - %s[%d]", bestPlayer.nick, bestPlayer.id), -1)
                 wait(1000)
                 sampSendChat("/spplayers 100", -1)
                 wait(1500)
                 sampSendChat("/gethere " .. bestPlayer.nick, -1)
             else
-                sampSendChat("/smp Âðåìÿ âûøëî! Ïîáåäèòåëü íå îïðåäåëåí.", -1)
+                sampSendChat("/smp Время вышло! Победитель не определен.", -1)
                 wait(1000)
                 sampSendChat("/spplayers 100", -1)
             end
@@ -2077,28 +2076,28 @@ end
 local function togglePotato()
     if st.potatoActive then
         st.potatoActive, st.potatoHolder, st.lastHolder = false, nil, nil
-        return sendMsg(C.WARN, "ÌÏ 'Ãîðÿ÷àÿ êàðòîøêà' âûêëþ÷åíî!")
+        return sendMsg(C.WARN, "МП 'Горячая картошка' выключено!")
     end
     local targetId = selectRandomPotatoHolder()
-    if not targetId then return sendMsg(C.WARN, "Â çîíå ñòðèìà íåò èãðîêîâ!") end
+    if not targetId then return sendMsg(C.WARN, "В зоне стрима нет игроков!") end
     st.potatoHolder = targetId
     st.lastHolder = nil
     st.potatoActive = true
     st.potatoTimer = os.clock() + 10.0
     local targetNick = sampGetPlayerNickname(targetId)
     sampSendChat(string.format("/setskin %d 104 0", targetId))
-    sampSendChat(string.format("/pm %d 0 Ó âàñ åñòü 10 ñåêóíä, ÷òîáû ïåðåäàòü ãîðÿ÷óþ êàðòîøêó!", targetId))
-    sampSendChat(string.format("/smp Ãîðÿ÷àÿ êàðòîøêà ó %s[%d], äåðæèòåñü äàëüøå!", targetNick, targetId))
+    sampSendChat(string.format("/pm %d 0 У вас есть 10 секунд, чтобы передать горячую картошку!", targetId))
+    sampSendChat(string.format("/smp Горячая картошка у %s[%d], держитесь дальше!", targetNick, targetId))
 end
 
 local function toggleVoda()
     if st.vodaActive then
         TH.voda = terminateThread(TH.voda)
         st.vodaActive = false
-        return sendMsg(C.WARN, "Ôóíêöèÿ 'Àíòè-Âîäà' âûêëþ÷åíà!")
+        return sendMsg(C.WARN, "Функция 'Анти-Вода' выключена!")
     end
     st.vodaActive = true
-    sendMsg(C.GREEN, "Ôóíêöèÿ 'Àíòè-Âîäà' àêòèâèðîâàíà!")
+    sendMsg(C.GREEN, "Функция 'Анти-Вода' активирована!")
     TH.voda = lua_thread.create(function()
         local handled = {}
         while st.vodaActive do
@@ -2110,8 +2109,8 @@ local function toggleVoda()
                     handled[id] = true
                     local nick = sampGetPlayerNickname(id)
                     local reason = u8:decode(ffi.string(B.voda_reason))
-                    sendMsg(C.WARN, string.format("Èãðîê %s[%d] óïàë â âîäó, ñïàâíèì...", nick, id))
-                    spawnAndNotify(nick, 1, reason ~= "" and reason or "Âû áûëè çàñïàâíåíû, òàê êàê óïàëè â âîäó")
+                    sendMsg(C.WARN, string.format("Игрок %s[%d] упал в воду, спавним...", nick, id))
+                    spawnAndNotify(nick, 1, reason ~= "" and reason or "Вы были заспавнены, так как упали в воду")
                 end
             end
         end
@@ -2123,18 +2122,18 @@ function se.onApplyPlayerAnimation(id, animname, frameDelta, loop, lockx, locky,
     if isPlayerBlacklisted(id) or id == st.myId then return end
     if st.autospheal then
         if (animname == "ped" and frameDelta == "gum_eat") or (animname == "FOOD" and frameDelta == "EAT_Burger") or (animname == "SMOKING" and frameDelta == "M_smk_drag") then
-            punishViolator(id, "HEAL", "Çàïðåùåíî ïîïîëíÿòü çäîðîâüå íà ìåðîïðèÿòèè!", "ïîïîëíåíèå çäîðîâüÿ")
+            punishViolator(id, "HEAL", "Запрещено пополнять здоровье на мероприятии!", "пополнение здоровья")
         end
     end
     if st.autosparm and animname == "goggles" and frameDelta == "goggles_put_on" then
-        punishViolator(id, "ARMOUR", "Çàïðåùåíî ïîïîëíÿòü áðîíþ íà ìåðîïðèÿòèè!", "ïîïîëíåíèå áðîíè")
+        punishViolator(id, "ARMOUR", "Запрещено пополнять броню на мероприятии!", "пополнение брони")
     end
 end
 
 function se.onServerMessage(col, text)
     local clear = cleanColorCodes(text)
 
-    local admin, sec_str = clear:match("%[Game Event%]%s*A:%s*([%a%d_]+)%s*çàïóñòèë ìåðîïðèÿòèå,%s*âðåìÿ äåéñòâèå òåëåïîðòà:%s*(%d+)%s*ñåê%.")
+    local admin, sec_str = clear:match("%[Game Event%]%s*A:%s*([%a%d_]+)%s*запустил мероприятие,%s*время действие телепорта:%s*(%d+)%s*сек%.")
     if admin and sec_str then
         local _, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
         if admin == sampGetPlayerNickname(my_id) then
@@ -2149,7 +2148,7 @@ function se.onServerMessage(col, text)
         end
     end
 
-    local stop_admin = clear:match("%[Game Event%]%s*A:%s*([%a%d_]+)%s*âûêëþ÷èë òåëåïîðò íà ìåðîïðèÿòèå%.")
+    local stop_admin = clear:match("%[Game Event%]%s*A:%s*([%a%d_]+)%s*выключил телепорт на мероприятие%.")
     if stop_admin then
         local _, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
         if stop_admin == sampGetPlayerNickname(my_id) then
@@ -2158,45 +2157,45 @@ function se.onServerMessage(col, text)
         end
     end
 
-    if clear:find("%[Game Event%]%s*Òåëåïîðò íà ìåðîïðèÿòèå çàêðûò,%s*íàáðàíî íåîáõîäèìîå êîëè÷åñòâî èãðîêîâ%.") then
+    if clear:find("%[Game Event%]%s*Телепорт на мероприятие закрыт,%s*набрано необходимое количество игроков%.") then
         HUD.is_running_now = false
         HUD.show("closed_players", 3.0)
     end
 
-    if clear:find("%[Game Event%]%s*Òåëåïîðò íà ìåðîïðèÿòèå çàêðûò,%s*âðåìÿ âûøëî%.") then
+    if clear:find("%[Game Event%]%s*Телепорт на мероприятие закрыт,%s*время вышло%.") then
         HUD.is_running_now = false
         HUD.is_closing = true
     end
 
     if st.enabled then
-        local sNick, sMsg = clear:match("^%[ÌÏ%]%s+([%w_]+):%s+(.+)$")
+        local sNick, sMsg = clear:match("^%[МП%]%s+([%w_]+):%s+(.+)$")
         if sNick and sNick == st.myNick then
             local lMsg = tolower(sMsg)
-            if lMsg:find("çåëåíûé ñâåò") then
+            if lMsg:find("зеленый свет") then
                 st.isGreen, st.movers, st.queue, st.inQueue = true, {}, {}, {}
-                sendMsg(C.GREEN, "Çåëåíûé ñâåò!")
-            elseif lMsg:find("êðàñíûé ñâåò") then
+                sendMsg(C.GREEN, "Зеленый свет!")
+            elseif lMsg:find("красный свет") then
                 st.isGreen, st.movers, st.queue, st.inQueue, st.redTime = false, {}, {}, {}, os.clock()
-                sendMsg(C.RED, "Êðàñíûé ñâåò!")
+                sendMsg(C.RED, "Красный свет!")
             end
         end
     end
 
     if st.autospheal then
-        local healNick = clear:match("^(%S+)%s+èñïîëüçîâàë%(à%) àïòå÷êó")
-            or clear:match("^(%S+)%s+ïðèíèìàåò äîçó óêðîïà")
-            or clear:match("^(%S+)%s+çàêèíóëñÿ òàáëåòêîé àäðåíàëèíà")
-            or clear:match("^(%S+)%s+âûïèë%(à%) áàíêó ñïðàíêà")
-            or clear:match("^(%S+)%s+âûïèë%(à%) áóòûëêó ïèâà")
-            or clear:match("^(%S+)%s+ñòðÿõíóë%(à%) ïåïåë")
-            or clear:match("^(%S+)%s+äîñòàë ñèãàðåòó ñ çàæèãàëêîé è çàêóðèë")
-            or clear:match("^(%S+)%[%d+%]%s+ïðèíèìàåò äîçó óêðîïà")
-            or clear:match("^(%S+)%[%d+%]%s+ñòðÿõíóë%(à%) ïåïåë")
+        local healNick = clear:match("^(%S+)%s+использовал%(а%) аптечку")
+            or clear:match("^(%S+)%s+принимает дозу укропа")
+            or clear:match("^(%S+)%s+закинулся таблеткой адреналина")
+            or clear:match("^(%S+)%s+выпил%(а%) банку спранка")
+            or clear:match("^(%S+)%s+выпил%(а%) бутылку пива")
+            or clear:match("^(%S+)%s+стряхнул%(а%) пепел")
+            or clear:match("^(%S+)%s+достал сигарету с зажигалкой и закурил")
+            or clear:match("^(%S+)%[%d+%]%s+принимает дозу укропа")
+            or clear:match("^(%S+)%[%d+%]%s+стряхнул%(а%) пепел")
         if healNick and not isPlayerBlacklisted(healNick) and healNick ~= st.myNick then
             for _, ped in ipairs(getAllChars()) do
                 local res, pId = sampGetPlayerIdByCharHandle(ped)
                 if res and sampGetPlayerNickname(pId) == healNick then
-                    punishViolator(pId, "HEAL", "Çàïðåùåíî ïîïîëíÿòü çäîðîâüå íà ìåðîïðèÿòèè!", "ïîïîëíåíèå çäîðîâüÿ")
+                    punishViolator(pId, "HEAL", "Запрещено пополнять здоровье на мероприятии!", "пополнение здоровья")
                     break
                 end
             end
@@ -2207,12 +2206,12 @@ end
 function se.onPlayerChatBubble(id, col, dist, dur, msg)
     if isPlayerBlacklisted(id) or id == st.myId then return end
     local nick = sampGetPlayerNickname(id)
-    if st.autospgun and msg:find("Äîñòàë%(à%) îðóæèå èç êàðìàíà") then
+    if st.autospgun and msg:find("Достал%(а%) оружие из кармана") then
         lua_thread.create(function()
-            sampSendChat('/weap ' .. id .. ' Íàðóøåíèå Ïðàâèë ÌÏ')
+            sampSendChat('/weap ' .. id .. ' Нарушение Правил МП')
             wait(400)
-            sampSendChat('/pm ' .. id .. ' 1 Çàïðåùåíî èñïîëüçîâàòü îðóæèå íà ìåðîïðèÿòèè!')
-            addEventLog("Ðàçîðóæåíèå: " .. nick)
+            sampSendChat('/pm ' .. id .. ' 1 Запрещено использовать оружие на мероприятии!')
+            addEventLog("Разоружение: " .. nick)
         end)
     end
 end
@@ -2287,7 +2286,7 @@ function se.onShowDialog(dialogId, style, title, button1, button2, text)
     end
 end
 
--- ==================== ÒÅÌÀ ====================
+-- ==================== ТЕМА ====================
 local function applyDarkWineTheme()
     local style = imgui.GetStyle()
     local c = style.Colors
@@ -2361,7 +2360,7 @@ local function DrawGameCard(id, title, desc, isActive, onClick)
     local strip_col = isActive and imgui.GetColorU32Vec4(imgui.ImVec4(0.20, 0.95, 0.30, 1.0)) or imgui.GetColorU32Vec4(imgui.ImVec4(0.45, 0.35, 0.40, 0.80))
     draw_list:AddRectFilled(imgui.ImVec2(p.x + 3, p.y + 8), imgui.ImVec2(p.x + 6, p.y + size.y - 8), strip_col, 2.0)
     draw_list:AddText(imgui.ImVec2(p.x + 14, p.y + 8), imgui.GetColorU32Vec4(imgui.ImVec4(0.98, 0.95, 0.96, 1.0)), u8(title))
-    local statusText = isActive and u8("ÀÊÒÈÂÍÎ") or u8("ÂÛÊË")
+    local statusText = isActive and u8("АКТИВНО") or u8("ВЫКЛ")
     local statusCol = isActive and imgui.GetColorU32Vec4(imgui.ImVec4(0.30, 0.95, 0.40, 1.0)) or imgui.GetColorU32Vec4(imgui.ImVec4(0.55, 0.50, 0.52, 0.80))
     local statusLen = imgui.CalcTextSize(statusText).x
     draw_list:AddText(imgui.ImVec2(p.x + size.x - statusLen - 12, p.y + 8), statusCol, statusText)
@@ -2380,7 +2379,7 @@ imgui.OnInitialize(function()
     end
 end)
 
--- ==================== ÈÑÏÐÀÂËÅÍÍÛÉ HUD ÓÂÅÄÎÌËÅÍÈÉ È ÎØÈÁÎÊ ====================
+-- ==================== HUD УВЕДОМЛЕНИЙ И ОШИБОК ====================
 imgui.OnFrame(function() return HUD.active end, function()
     local remaining = HUD.end_time - os.clock()
 
@@ -2440,7 +2439,7 @@ imgui.OnFrame(function() return HUD.active end, function()
         local prefix_sz = imgui.CalcTextSize(u8"MP Manager | ")
 
         if is_err then
-            dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Îáíàðóæåíû îøèáêè â çàïîëíåíèè:")
+            dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Обнаружены ошибки в заполнении:")
             for i, err in ipairs(HUD.error_list) do
                 local err_line = "- " .. tostring(err)
                 dl:AddText(imgui.ImVec2(tx + 6.0, ty1 + 4.0 + 20.0 * i), 0xFFFF7777, u8(err_line))
@@ -2448,84 +2447,38 @@ imgui.OnFrame(function() return HUD.active end, function()
         else
             local ty2 = c_min.y + 30.0
             if HUD.mode == "countdown" then
-                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Òåëåïîðò îòêðûò!")
-                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, string.format(u8"Äî çàêðûòèÿ âõîäà: [ %d ñåê. ]", math.max(0, math.ceil(remaining))))
+                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Телепорт открыт!")
+                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, string.format(u8"До закрытия входа: [ %d сек. ]", math.max(0, math.ceil(remaining))))
             elseif HUD.mode == "saved_success" then
-                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Íàñòðîéêè ñîõðàíåíû!")
-                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Âñå ïàðàìåòðû óñïåøíî îáíîâëåíû íà ñåðâåðå")
+                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Настройки сохранены!")
+                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Все параметры успешно обновлены на сервере")
             elseif HUD.mode == "fetched_success" then
-                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Íàñòðîéêè ïîëó÷åíû!")
-                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Äàííûå ìåðîïðèÿòèÿ óñïåøíî çàãðóæåíû â ìåíþ")
+                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Настройки получены!")
+                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Данные мероприятия успешно загружены в меню")
             elseif HUD.mode == "stopped_manual" then
-                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Òåëåïîðò îñòàíîâëåí!")
-                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Âû âûêëþ÷èëè òåëåïîðò íà ìåðîïðèÿòèå")
+                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Телепорт остановлен!")
+                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Вы выключили телепорт на мероприятие")
             elseif HUD.mode == "closed_players" then
-                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Òåëåïîðò çàêðûò!")
-                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Íàáðàíî íåîáõîäèìîå êîëè÷åñòâî èãðîêîâ")
+                dl:AddText(imgui.ImVec2(tx + prefix_sz.x, ty1), color, u8"Телепорт закрыт!")
+                dl:AddText(imgui.ImVec2(tx, ty2), 0xFFB0A4A8, u8"Набрано необходимое количество игроков")
             end
         end
         imgui.End()
     end
 end)
 
--- ==================== ÄÈÀËÎÃÎÂÎÅ ÎÊÍÎ ÎÁÍÎÂËÅÍÈß ====================
-imgui.OnFrame(function() return UpdateState.show_window[0] end, function(player)
-    local resW, resH = getScreenResolution()
-    local winW, winH = 500, 360
-    imgui.SetNextWindowSize(imgui.ImVec2(winW, winH), imgui.Cond.Always)
-    imgui.SetNextWindowPos(imgui.ImVec2((resW - winW) / 2, (resH - winH) / 2), imgui.Cond.Always)
-
-    local flags = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoResize
-    if imgui.Begin(u8"Îáíîâëåíèå ñêðèïòà MP Manager##UpdatePromptWin", UpdateState.show_window, flags) then
-        imgui.TextColored(imgui.ImVec4(0.3, 0.9, 0.4, 1.0), u8(string.format("Äîñòóïíî íîâîå îáíîâëåíèå! v%s", UpdateState.new_version)))
-        imgui.TextDisabled(u8(string.format("Òåêóùàÿ âåðñèÿ: v%s", thisScript().version)))
-        imgui.Separator()
-        imgui.Spacing()
-
-        imgui.TextColored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), u8"Ñïèñîê èçìåíåíèé / óëó÷øåíèé:")
-        imgui.BeginChild("##UpdateChangelogBox", imgui.ImVec2(-1, 160), true)
-        if #UpdateState.changelog == 0 then
-            imgui.TextDisabled(u8"• Óëó÷øåíà îáùàÿ ñòàáèëüíîñòü ñêðèïòà")
-        else
-            for _, item in ipairs(UpdateState.changelog) do
-                imgui.TextWrapped(u8("• " .. item))
-                imgui.Spacing()
-            end
-        end
-        imgui.EndChild()
-
-        imgui.Spacing()
-        if UpdateState.is_downloading then
-            imgui.TextColored(imgui.ImVec4(0.2, 0.8, 1.0, 1.0), u8(UpdateState.status_text))
-        else
-            imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.20, 0.65, 0.30, 0.95))
-            imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(0.28, 0.80, 0.40, 1.0))
-            if imgui.Button(u8"Óñòàíîâèòü îáíîâëåíèå", imgui.ImVec2(230, 34)) then
-                downloadAndInstallUpdate()
-            end
-            imgui.PopStyleColor(2)
-
-            imgui.SameLine()
-            if imgui.Button(u8"Ïîçæå / Çàêðûòü", imgui.ImVec2(150, 34)) then
-                UpdateState.show_window[0] = false
-            end
-        end
-        imgui.End()
-    end
-end)
-
--- ==================== ÎÊÍÎ ÌÎÍÈÒÎÐÈÍÃÀ ====================
+-- ==================== ОКНО МОНИТОРИНГА ====================
 imgui.OnFrame(function() return UI.show_monitor[0] end, function(player)
     local resW, resH = getScreenResolution()
     imgui.SetNextWindowSize(imgui.ImVec2(640, 340), imgui.Cond.FirstUseEver)
     imgui.SetNextWindowPos(imgui.ImVec2((resW - 640) / 2, (resH - 340) / 2), imgui.Cond.FirstUseEver)
-    if imgui.Begin(u8"Ìîíèòîðèíã ó÷àñòíèêîâ Äåðáè##MonitorDerbyWin", UI.show_monitor) then
-        imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Èãðîêè â çîíå ñòðèìà:")
+    if imgui.Begin(u8"Мониторинг участников Дерби##MonitorDerbyWin", UI.show_monitor) then
+        imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Игроки в зоне стрима:")
         imgui.Separator()
 
         imgui.BeginChild("##MonitorScrollList", imgui.ImVec2(0, 0), true)
         if #players_monitor_list == 0 then
-            imgui.TextDisabled(u8"Â çîíå ñòðèìà íåò èãðîêîâ...")
+            imgui.TextDisabled(u8"В зоне стрима нет игроков...")
         else
             for _, data in ipairs(players_monitor_list) do
                 imgui.TextColored(imgui.ImVec4(1, 1, 1, 1), u8(data.name))
@@ -2541,7 +2494,7 @@ imgui.OnFrame(function() return UI.show_monitor[0] end, function(player)
     end
 end)
 
--- ==================== ÃËÀÂÍÎÅ ÎÊÍÎ ====================
+-- ==================== ГЛАВНОЕ ОКНО ====================
 imgui.OnFrame(function() return UI.show[0] end, function(player)
     local resW, resH = getScreenResolution()
     imgui.SetNextWindowSize(imgui.ImVec2(920, 640), imgui.Cond.FirstUseEver)
@@ -2551,7 +2504,7 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
         imgui.BeginGroup()
         imgui.TextColored(imgui.ImVec4(0.85, 0.28, 0.35, 1.0), u8"MP ADMIN MANAGER")
         imgui.SameLine()
-        imgui.TextDisabled(u8("| Åäèíûé öåíòð ïðîâåäåíèÿ ìåðîïðèÿòèé (v" .. thisScript().version .. ")"))
+        imgui.TextDisabled(u8"| Единый центр проведения мероприятий")
         imgui.EndGroup()
         imgui.SameLine(imgui.GetWindowWidth() - 36)
         imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.25, 0.08, 0.12, 0.6))
@@ -2562,16 +2515,16 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
         imgui.Separator()
         imgui.Spacing()
         imgui.BeginChild("##Sidebar", imgui.ImVec2(185, 0), true)
-        imgui.TextDisabled(u8"ÐÀÇÄÅËÛ")
+        imgui.TextDisabled(u8"РАЗДЕЛЫ")
         imgui.Spacing()
         local tabs = {
-            { id = 3, name = u8"Ìåíþ /eventmenu" },
-            { id = 5, name = u8"Îïîâåùåíèÿ /ao" },
-            { id = 1, name = u8"Êàòàëîã ÌÏ" },
-            { id = 2, name = u8"Äîï. ôóíêöèè" },
-            { id = 4, name = u8"Äåéñòâèÿ â ðàäèóñå" },
-            { id = 6, name = u8"Ðàçäà÷à àâòî" },
-            { id = 7, name = u8"×åðíûé ñïèñîê" }
+            { id = 3, name = u8"Меню /eventmenu" },
+            { id = 5, name = u8"Оповещения /ao" },
+            { id = 1, name = u8"Каталог МП" },
+            { id = 2, name = u8"Доп. функции" },
+            { id = 4, name = u8"Действия в радиусе" },
+            { id = 6, name = u8"Раздача авто" },
+            { id = 7, name = u8"Черный список" }
         }
         for _, t in ipairs(tabs) do
             local isSel = (UI.currentSidebar == t.id)
@@ -2599,26 +2552,17 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 draw_list:AddRectFilled(imgui.ImVec2(p.x, p.y + 3), imgui.ImVec2(p.x + 4, p.y + bSize.y - 3), imgui.GetColorU32Vec4(imgui.ImVec4(0.85, 0.28, 0.35, 1.0)), 2.0)
             end
         end
-
-        imgui.Spacing()
-        imgui.Separator()
-        imgui.Spacing()
-        if imgui.Button(u8"Ïðîâåðèòü îáíîâëåíèÿ##upd_check_btn", imgui.ImVec2(169, 26)) then
-            checkScriptUpdate()
-            sendMsg(C.WARN, "Ïðîâåðêà îáíîâëåíèé...")
-        end
-
         imgui.EndChild()
         imgui.SameLine()
         imgui.BeginChild("##WorkArea", imgui.ImVec2(0, 0), true)
 
-        -- ==================== ÂÊËÀÄÊÀ 3: ÌÅÍÞ /EVENTMENU ====================
+        -- ==================== ВКЛАДКА 3: МЕНЮ /EVENTMENU ====================
         if UI.currentSidebar == 3 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Óïðàâëåíèå ìåðîïðèÿòèåì ÷åðåç /eventmenu è /ao")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Управление мероприятием через /eventmenu и /ao")
             imgui.Separator()
             imgui.Spacing()
 
-            local preview_slot = u8"Âûáåðèòå ìåðîïðèÿòèå èç ñïèñêà ñåðâåðà..."
+            local preview_slot = u8"Выберите мероприятие из списка сервера..."
             if #Core.events_list > 0 and Core.events_list[UI.selected_mp_idx[0] + 1] then
                 local it = Core.events_list[UI.selected_mp_idx[0] + 1]
                 preview_slot = string.format("[%d] %s", it.event_id, u8(it.title))
@@ -2627,7 +2571,7 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.PushItemWidth(340)
             if imgui.BeginCombo("##select_server_mp", preview_slot) then
                 if #Core.events_list == 0 then
-                    imgui.TextDisabled(u8"Ñïèñîê ïóñò. Íàæìèòå 'Îáíîâèòü ñïèñîê'")
+                    imgui.TextDisabled(u8"Список пуст. Нажмите 'Обновить список'")
                 else
                     for idx, it in ipairs(Core.events_list) do
                         local is_sel = (UI.selected_mp_idx[0] == idx - 1)
@@ -2642,25 +2586,25 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            if imgui.Button(u8"Îáíîâèòü ñïèñîê##fetch_list_btn", imgui.ImVec2(130, 26)) then
+            if imgui.Button(u8"Обновить список##fetch_list_btn", imgui.ImVec2(130, 26)) then
                 Core.fetching_list = true
                 Core.active_dialog_id = -1
                 sampSendChat("/eventmenu")
             end
 
             imgui.SameLine()
-            if imgui.Button(u8"Ñ÷èòàòü ñ ñåðâåðà##fetch_st_btn", imgui.ImVec2(140, 26)) then
+            if imgui.Button(u8"Считать с сервера##fetch_st_btn", imgui.ImVec2(140, 26)) then
                 Core.fetchSettings()
             end
 
             imgui.Spacing()
 
-            -- ==================== ÁËÎÊ ÏÐÅÑÅÒÎÂ / ÊÎÍÔÈÃÎÂ ÌÏ ====================
+            -- БЛОК ПРЕСЕТОВ
             imgui.PushStyleColor(imgui.Col.ChildBg, imgui.ImVec4(0.16, 0.07, 0.11, 0.7))
             imgui.BeginChild("##PresetsManagerBlock", imgui.ImVec2(-1, 72), true)
-            imgui.TextColored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), u8"Áûñòðûå êîíôèãóðàöèè (Ïðåñåòû íàñòðîåê):")
+            imgui.TextColored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), u8"Быстрые конфигурации (Пресеты настроек):")
 
-            local cur_preset_name = PresetsList[UI.selected_preset_idx[0] + 1] or u8"Íåò ïðåñåòîâ"
+            local cur_preset_name = PresetsList[UI.selected_preset_idx[0] + 1] or u8"Нет пресетов"
             imgui.PushItemWidth(220)
             if imgui.BeginCombo("##preset_selector", u8(cur_preset_name)) then
                 for idx, pName in ipairs(PresetsList) do
@@ -2674,42 +2618,42 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            if imgui.Button(u8"Ïðèìåíèòü êîíôèã", imgui.ImVec2(130, 24)) then
+            if imgui.Button(u8"Применить конфиг", imgui.ImVec2(130, 24)) then
                 if PresetsList[UI.selected_preset_idx[0] + 1] then
                     applyPreset(PresetsList[UI.selected_preset_idx[0] + 1])
-                    sendMsg(C.GREEN, "Êîíôèã '" .. PresetsList[UI.selected_preset_idx[0] + 1] .. "' óñïåøíî ïðèìåíåí â ôîðìó!")
+                    sendMsg(C.GREEN, "Конфиг '" .. PresetsList[UI.selected_preset_idx[0] + 1] .. "' успешно применен в форму!")
                 end
             end
 
             imgui.SameLine()
             imgui.PushItemWidth(150)
-            imgui.InputTextWithHint("##new_pr_name", u8("Èìÿ íîâîãî êîíôèãà"), B.new_preset_name, 64)
+            imgui.InputTextWithHint("##new_pr_name", u8("Имя нового конфига"), B.new_preset_name, 64)
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            if imgui.Button(u8"Ñîõðàíèòü##save_preset_btn", imgui.ImVec2(80, 24)) then
+            if imgui.Button(u8"Сохранить##save_preset_btn", imgui.ImVec2(80, 24)) then
                 local prName = u8:decode(ffi.string(B.new_preset_name))
                 if #prName == 0 and PresetsList[UI.selected_preset_idx[0] + 1] then
                     prName = PresetsList[UI.selected_preset_idx[0] + 1]
                 end
                 if saveCurrentAsPreset(prName) then
                     imgui.StrCopy(B.new_preset_name, "")
-                    sendMsg(C.GREEN, "Êîíôèã '" .. prName .. "' óñïåøíî ñîõðàíåí!")
+                    sendMsg(C.GREEN, "Конфиг '" .. prName .. "' успешно сохранен!")
                 else
-                    sendMsg(C.WARN, "Ââåäèòå íàçâàíèå äëÿ ñîõðàíåíèÿ êîíôèãà!")
+                    sendMsg(C.WARN, "Введите название для сохранения конфига!")
                 end
             end
 
             imgui.SameLine()
             imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.65, 0.15, 0.20, 0.8))
-            if imgui.Button(u8"Óäàëèòü", imgui.ImVec2(70, 24)) then
+            if imgui.Button(u8"Удалить", imgui.ImVec2(70, 24)) then
                 local delName = PresetsList[UI.selected_preset_idx[0] + 1]
                 if delName and Presets[delName] then
                     Presets[delName] = nil
                     savePresetsToFile()
                     refreshPresetsList()
                     UI.selected_preset_idx[0] = 0
-                    sendMsg(C.RED, "Êîíôèã '" .. delName .. "' óäàëåí.")
+                    sendMsg(C.RED, "Конфиг '" .. delName .. "' удален.")
                 end
             end
             imgui.PopStyleColor()
@@ -2719,30 +2663,30 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
 
             imgui.Spacing()
 
-            -- Ñêðîëëèðóåìàÿ ôîðìà ïàðàìåòðîâ
+            -- Скроллируемая форма параметров
             imgui.BeginChild("##scrollable_event_form", imgui.ImVec2(-1, -66), true)
 
-            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Îñíîâíûå ïàðàìåòðû ÌÏ:")
+            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Основные параметры МП:")
             imgui.Spacing()
 
-            imgui.Text(u8"Íàçâàíèå ÌÏ:")
+            imgui.Text(u8"Название МП:")
             imgui.PushItemWidth(240)
             imgui.InputText("##title_event_in", B.ev_new_title, ffi.sizeof(B.ev_new_title))
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            imgui.Text(u8"Ïðèç:")
+            imgui.Text(u8"Приз:")
             imgui.PushItemWidth(170)
             imgui.InputText("##prize_event_in", B.ev_prize, ffi.sizeof(B.ev_prize))
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            if imgui.Button(u8"Ñãåíåðèðîâàòü øàáëîí /ao", imgui.ImVec2(210, 24)) then
+            if imgui.Button(u8"Сгенерировать шаблон /ao", imgui.ImVec2(210, 24)) then
                 imgui.StrCopy(B.ev_broadcast, u8(generateBroadcastTemplate()))
             end
 
             imgui.Spacing()
-            imgui.Text(u8"Ñîîáùåíèå íà âåñü ñåðâåð (/eventmenu):")
+            imgui.Text(u8"Сообщение на весь сервер (/eventmenu):")
             imgui.PushItemWidth(-1)
             imgui.InputText("##ao_event_in", B.ev_broadcast, ffi.sizeof(B.ev_broadcast))
             imgui.PopItemWidth()
@@ -2750,15 +2694,15 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.Spacing()
             imgui.Columns(2, "ev_main_cols", false)
 
-            imgui.Text(u8"Ëèìèò èãðîêîâ:"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_lim", B.ev_limit, 0); imgui.PopItemWidth()
-            imgui.Text(u8"Âðåìÿ äåéñòâèÿ ÒÏ (ñåê):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_tpt", B.ev_tp_time, 0); imgui.PopItemWidth()
-            imgui.Text(u8"Ïàðîëü äëÿ âõîäà:"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputText("##ev_pass", B.ev_password, ffi.sizeof(B.ev_password)); imgui.PopItemWidth()
+            imgui.Text(u8"Лимит игроков:"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_lim", B.ev_limit, 0); imgui.PopItemWidth()
+            imgui.Text(u8"Время действия ТП (сек):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_tpt", B.ev_tp_time, 0); imgui.PopItemWidth()
+            imgui.Text(u8"Пароль для входа:"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputText("##ev_pass", B.ev_password, ffi.sizeof(B.ev_password)); imgui.PopItemWidth()
 
             imgui.NextColumn()
 
-            imgui.Text(u8"Âûäàòü HP (0-250):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_hp", B.ev_health, 0); imgui.PopItemWidth()
-            imgui.Text(u8"Âûäàòü áðîíþ (0-250):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_arm", B.ev_armour, 0); imgui.PopItemWidth()
-            imgui.Text(u8"ID ñêèíà (1-1120):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_skin", B.ev_skin, 0); imgui.PopItemWidth()
+            imgui.Text(u8"Выдать HP (0-250):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_hp", B.ev_health, 0); imgui.PopItemWidth()
+            imgui.Text(u8"Выдать броню (0-250):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_arm", B.ev_armour, 0); imgui.PopItemWidth()
+            imgui.Text(u8"ID скина (1-1120):"); imgui.SameLine(220); imgui.PushItemWidth(100); imgui.InputInt("##ev_skin", B.ev_skin, 0); imgui.PopItemWidth()
 
             imgui.Columns(1)
 
@@ -2766,9 +2710,8 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.Separator()
             imgui.Spacing()
 
-            -- Îðóæèå è ïðàâèëà
-            if imgui.CollapsingHeader(u8"Âûäà÷à îðóæèÿ è ïàòðîíîâ") then
-                imgui.Text(u8"Îðóæèå:")
+            if imgui.CollapsingHeader(u8"Выдача оружия и патронов") then
+                imgui.Text(u8"Оружие:")
                 imgui.PushItemWidth(320)
                 if imgui.BeginCombo("##ev_wp_combo", WEAPON_NAMES[B.ev_weapon_sel[0] + 1]) then
                     for i, name in ipairs(WEAPON_NAMES) do
@@ -2780,27 +2723,27 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 end
                 imgui.PopItemWidth()
                 imgui.SameLine()
-                imgui.Text(u8"Ïàòðîíû:")
+                imgui.Text(u8"Патроны:")
                 imgui.SameLine()
                 imgui.PushItemWidth(120)
                 imgui.InputInt("##ev_ammo", B.ev_ammo_count, 0)
                 imgui.PopItemWidth()
             end
 
-            if imgui.CollapsingHeader(u8"Ïðàâèëà äèàëîãà ìåðîïðèÿòèÿ") then
-                imgui.Text(u8"Ñòðîêà 1:"); imgui.PushItemWidth(-1); imgui.InputText("##r1_in", B.ev_rule1, ffi.sizeof(B.ev_rule1)); imgui.PopItemWidth()
-                imgui.Text(u8"Ñòðîêà 2:"); imgui.PushItemWidth(-1); imgui.InputText("##r2_in", B.ev_rule2, ffi.sizeof(B.ev_rule2)); imgui.PopItemWidth()
-                imgui.Text(u8"Ñòðîêà 3:"); imgui.PushItemWidth(-1); imgui.InputText("##r3_in", B.ev_rule3, ffi.sizeof(B.ev_rule3)); imgui.PopItemWidth()
+            if imgui.CollapsingHeader(u8"Правила диалога мероприятия") then
+                imgui.Text(u8"Строка 1:"); imgui.PushItemWidth(-1); imgui.InputText("##r1_in", B.ev_rule1, ffi.sizeof(B.ev_rule1)); imgui.PopItemWidth()
+                imgui.Text(u8"Строка 2:"); imgui.PushItemWidth(-1); imgui.InputText("##r2_in", B.ev_rule2, ffi.sizeof(B.ev_rule2)); imgui.PopItemWidth()
+                imgui.Text(u8"Строка 3:"); imgui.PushItemWidth(-1); imgui.InputText("##r3_in", B.ev_rule3, ffi.sizeof(B.ev_rule3)); imgui.PopItemWidth()
             end
 
-            if imgui.CollapsingHeader(u8"Òî÷êè ñïàâíà ó÷àñòíèêîâ") then
-                imgui.Text(u8"Êîëè÷åñòâî òî÷åê:")
+            if imgui.CollapsingHeader(u8"Точки спавна участников") then
+                imgui.Text(u8"Количество точек:")
                 imgui.SameLine(180)
                 imgui.PushItemWidth(120)
                 imgui.InputInt("##ev_sp_cnt", B.ev_sp_count, 0)
                 imgui.PopItemWidth()
 
-                imgui.Text(u8"Àëãîðèòì ðàñïðåäåëåíèÿ:")
+                imgui.Text(u8"Алгоритм распределения:")
                 imgui.PushItemWidth(320)
                 if imgui.BeginCombo("##ev_sp_alg", SPAWN_TYPES[B.ev_sp_type[0] + 1]) then
                     for i, name in ipairs(SPAWN_TYPES) do
@@ -2813,12 +2756,12 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 imgui.PopItemWidth()
 
                 imgui.Spacing()
-                imgui.TextDisabled(u8"Çàïèñü ñëîòà ñïàâíà íà êîîðäèíàòû âàøåãî ïåðñîíàæà:")
+                imgui.TextDisabled(u8"Запись слота спавна на координаты вашего персонажа:")
                 local max_slots = (B.ev_sp_type[0] == 0) and 1 or 10
                 for slot = 1, max_slots do
                     local active = (B.ev_sp_slot[0] == slot)
                     if active then imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.85, 0.28, 0.35, 1.0)) end
-                    if imgui.Button(string.format(u8"Ñëîò #%d", slot), imgui.ImVec2(62, 26)) then
+                    if imgui.Button(string.format(u8"Слот #%d", slot), imgui.ImVec2(62, 26)) then
                         B.ev_sp_slot[0] = active and 0 or slot
                     end
                     if active then imgui.PopStyleColor() end
@@ -2830,22 +2773,21 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             imgui.Separator()
             imgui.Spacing()
 
-            -- Ìîäèôèêàòîðû
-            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Ìîäèôèêàòîðû è ïðàâèëà âõîäà:")
+            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Модификаторы и правила входа:")
             imgui.Spacing()
 
             local toggles_grid = {
-                { "##sw_pvp", Opt.pvp_dmg, u8"Çàïðåò óðîíà" },
-                { "##sw_acc", Opt.accessories, u8"Àêñåññóàðû" },
-                { "##sw_guards", Opt.guards, u8"Îõðàííèêè" },
-                { "##sw_coll", Opt.collision, u8"Êîëëèçèÿ" },
-                { "##sw_car", Opt.lic_car, u8"Ëèö. àâòî" },
-                { "##sw_moto", Opt.lic_moto, u8"Ëèö. ìîòî" },
-                { "##sw_boat", Opt.lic_boat, u8"Ëèö. ëîäêè" },
-                { "##sw_fly", Opt.lic_fly, u8"Ëèö. ïîë¸òû" },
-                { "##sw_take_guns", Opt.take_guns, u8"Çàáðàòü îðóæèå" },
-                { "##sw_re_tp", Opt.re_tp, u8"Ïîâòîðíûé ÒÏ" },
-                { "##sw_launcher", Opt.launcher, u8"Ëàóí÷åð îíëè" }
+                { "##sw_pvp", Opt.pvp_dmg, u8"Запрет урона" },
+                { "##sw_acc", Opt.accessories, u8"Аксессуары" },
+                { "##sw_guards", Opt.guards, u8"Охранники" },
+                { "##sw_coll", Opt.collision, u8"Коллизия" },
+                { "##sw_car", Opt.lic_car, u8"Лиц. авто" },
+                { "##sw_moto", Opt.lic_moto, u8"Лиц. мото" },
+                { "##sw_boat", Opt.lic_boat, u8"Лиц. лодки" },
+                { "##sw_fly", Opt.lic_fly, u8"Лиц. полёты" },
+                { "##sw_take_guns", Opt.take_guns, u8"Забрать оружие" },
+                { "##sw_re_tp", Opt.re_tp, u8"Повторный ТП" },
+                { "##sw_launcher", Opt.launcher, u8"Лаунчер онли" }
             }
 
             for i = 1, #toggles_grid, 3 do
@@ -2873,14 +2815,12 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             end
 
             imgui.EndChild()
-
             imgui.Spacing()
 
-            -- Íèæíÿÿ ïàíåëü äåéñòâèé
             if Core.running then
-                imgui.TextColored(imgui.ImVec4(1.0, 0.7, 0.2, 1.0), u8"Ñèíõðîíèçàöèÿ ïàðàìåòðîâ ñ ñåðâåðîì...")
+                imgui.TextColored(imgui.ImVec4(1.0, 0.7, 0.2, 1.0), u8"Синхронизация параметров с сервером...")
             else
-                if imgui.Button(u8"ÏÐÈÌÅÍÈÒÜ ÍÀÑÒÐÎÉÊÈ Â /EVENTMENU", imgui.ImVec2(340, 32)) then
+                if imgui.Button(u8"ПРИМЕНИТЬ НАСТРОЙКИ В /EVENTMENU", imgui.ImVec2(340, 32)) then
                     Core.applySettings()
                 end
 
@@ -2888,41 +2828,41 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
 
                 if HUD.is_running_now then
                     imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.75, 0.15, 0.20, 0.90))
-                    if imgui.Button(u8"ÎÑÒÀÍÎÂÈÒÜ ÒÅËÅÏÎÐÒ ÍÀ ÌÏ", imgui.ImVec2(340, 32)) then
+                    if imgui.Button(u8"ОСТАНОВИТЬ ТЕЛЕПОРТ НА МП", imgui.ImVec2(340, 32)) then
                         Core.toggleEvent()
                     end
                     imgui.PopStyleColor()
                 else
                     imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0.20, 0.60, 0.25, 0.90))
-                    if imgui.Button(u8"ÎÒÊÐÛÒÜ ÒÅËÅÏÎÐÒ (ÑÒÀÐÒ ÌÏ + /AO)", imgui.ImVec2(340, 32)) then
+                    if imgui.Button(u8"ОТКРЫТЬ ТЕЛЕПОРТ (СТАРТ МП + /AO)", imgui.ImVec2(340, 32)) then
                         Core.toggleEvent()
                     end
                     imgui.PopStyleColor()
                 end
             end
 
-        -- ==================== ÂÊËÀÄÊÀ 5: ÑÎÎÁÙÅÍÈß /AO È ÏÎÁÅÄÈÒÅËÜ ====================
+        -- ==================== ВКЛАДКА 5: СООБЩЕНИЯ /AO И ПОБЕДИТЕЛЬ ====================
         elseif UI.currentSidebar == 5 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Îïîâåùåíèÿ â îáùèé ÷àò (/ao) è îãëàøåíèå ïîáåäèòåëÿ")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Оповещения в общий чат (/ao) и оглашение победителя")
             imgui.Separator()
             imgui.Spacing()
 
-            imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, 1.0), u8"Îãëàøåíèå ïîáåäèòåëÿ ÌÏ ïî ID:")
-            imgui.TextDisabled(u8"Ñêðèïò ñàì íàéäåò íèê èãðîêà è ïîäñòàâèò òåêóùåå íàçâàíèå ìåðîïðèÿòèÿ:")
+            imgui.TextColored(imgui.ImVec4(0.2, 1.0, 0.4, 1.0), u8"Оглашение победителя МП по ID:")
+            imgui.TextDisabled(u8"Скрипт сам найдет ник игрока и подставит текущее название мероприятия:")
             imgui.Spacing()
 
-            imgui.Text(u8"ID ïîáåäèòåëÿ:")
+            imgui.Text(u8"ID победителя:")
             imgui.SameLine()
             imgui.PushItemWidth(100)
             imgui.InputText("##win_id_input", B.winner_input_id, 16, imgui.InputTextFlags.CharsDecimal)
             imgui.PopItemWidth()
 
             imgui.SameLine()
-            if imgui.Button(u8"ÎÁÚßÂÈÒÜ ÏÎÁÅÄÈÒÅËß Â /AO", imgui.ImVec2(240, 28)) then
+            if imgui.Button(u8"ОБЪЯВИТЬ ПОБЕДИТЕЛЯ В /AO", imgui.ImVec2(240, 28)) then
                 announceWinner(ffi.string(B.winner_input_id))
             end
             imgui.SameLine()
-            imgui.TextDisabled(u8"(Êîìàíäà â ÷àò: /mpwin [ID])")
+            imgui.TextDisabled(u8"(Команда в чат: /mpwin [ID])")
 
             local win_name_prev = getEffectiveEventName()
             local id_prev = ffi.string(B.winner_input_id)
@@ -2930,67 +2870,66 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             if tonumber(id_prev) and sampIsPlayerConnected(tonumber(id_prev)) then
                 nick_prev = sampGetPlayerNickname(tonumber(id_prev))
             end
-            local preview_win = string.format('/ao [ÌÏ] Ïîáåäèòåëåì ÌÏ "%s" ñòàë %s[%s]! Ïîçäðàâëÿåì!', win_name_prev, nick_prev, id_prev ~= "" and id_prev or "ID")
-            imgui.TextColored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), u8("Ïðèìåð: " .. preview_win))
+            local preview_win = string.format('/ao [МП] Победителем МП "%s" стал %s[%s]! Поздравляем!', win_name_prev, nick_prev, id_prev ~= "" and id_prev or "ID")
+            imgui.TextColored(imgui.ImVec4(1.0, 0.8, 0.2, 1.0), u8("Пример: " .. preview_win))
 
             imgui.Spacing()
             imgui.Separator()
             imgui.Spacing()
 
-            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Ðó÷íîé àíîíñ íà÷àëà ìåðîïðèÿòèÿ:")
+            imgui.TextColored(imgui.ImVec4(0.95, 0.85, 0.88, 1.0), u8"Ручной анонс начала мероприятия:")
             imgui.Spacing()
 
             local previewBroadcast = generateBroadcastTemplate()
-            imgui.Text(u8"Òåêñò ñîîáùåíèÿ:")
+            imgui.Text(u8"Текст сообщения:")
             imgui.TextColored(imgui.ImVec4(0.3, 0.9, 0.4, 1.0), u8(previewBroadcast))
             imgui.Spacing()
 
-            if imgui.Button(u8"ÎÒÏÐÀÂÈÒÜ ÀÍÎÍÑ Â /ao ÑÅÉ×ÀÑ", imgui.ImVec2(290, 32)) then
+            if imgui.Button(u8"ОТПРАВИТЬ АНОНС В /ao СЕЙЧАС", imgui.ImVec2(290, 32)) then
                 sampSendChat("/ao " .. previewBroadcast)
-                addEventLog("Ðó÷íàÿ îòïðàâêà àíîíñà â /ao")
+                addEventLog("Ручная отправка анонса в /ao")
             end
 
-        -- ==================== ÊÀÒÀËÎÃ ÌÏ ====================
+        -- ==================== КАТАЛОГ МП ====================
         elseif UI.currentSidebar == 1 then
             if UI.current_mp == nil then
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Êàòàëîã ìåðîïðèÿòèé")
-                imgui.TextDisabled(u8"Êëèêíèòå ïî êàðòî÷êå äëÿ óïðàâëåíèÿ, íàñòðîéêè è îçâó÷êè ïðàâèë")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Каталог мероприятий")
+                imgui.TextDisabled(u8"Кликните по карточке для управления, настройки и озвучки правил")
                 imgui.Separator()
                 imgui.Spacing()
-                DrawGameCard("derby", "Äåðáè", "Âûæèâàíèå íà ìàøèíàõ.\nÑïàâí áåç àâòî èëè ïðè íèçêîì HP", st.derbyActive, function() UI.current_mp = "derby" end)
+                DrawGameCard("derby", "Дерби", "Выживание на машинах.\nСпавн без авто или при низком HP", st.derbyActive, function() UI.current_mp = "derby" end)
                 imgui.SameLine(290)
-                DrawGameCard("sectors", "Ñåêòîðû", "Èãðîêàì íóæíî âñòàòü â áåçîïàñíûé ñåêòîð.\nÊòî íå óñïåë çà 3 ñåêóíäû — ñïàâí", (st.sectorSetupMode or st.sectorRoundRun), function() UI.current_mp = "sectors" end)
+                DrawGameCard("sectors", "Секторы", "Игрокам нужно встать в безопасный сектор.\nКто не успел за 3 секунды — спавн", (st.sectorSetupMode or st.sectorRoundRun), function() UI.current_mp = "sectors" end)
                 imgui.Spacing()
-                DrawGameCard("rlgl", "Ñâåòîôîð", "Áåã íà çåëåíûé, ñòîï íà êðàñíûé.\nËþáîå äâèæåíèå íà êðàñíûé — ñïàâí", st.enabled, function() UI.current_mp = "rlgl" end)
+                DrawGameCard("rlgl", "Светофор", "Бег на зеленый, стоп на красный.\nЛюбое движение на красный — спавн", st.enabled, function() UI.current_mp = "rlgl" end)
                 imgui.SameLine(290)
-                DrawGameCard("chairs", "Ñòóëü÷èêè", "Ìóçûêàëüíûé ðàóíä íà ïàðêîâêå.\nÊòî íå çàíÿë ìåñòî ïî êîìàíäå — ñïàâí", (st.chairs or st.stulActive), function() UI.current_mp = "chairs" end)
+                DrawGameCard("chairs", "Стульчики", "Музыкальный раунд на парковке.\nКто не занял место по команде — спавн", (st.chairs or st.stulActive), function() UI.current_mp = "chairs" end)
                 imgui.Spacing()
-                DrawGameCard("dm", "DeathMatch", "10-ìèíóòíàÿ ïåðåñòðåëêà.\nÀâòî-ïîäñ÷åò ôðàãîâ è àâòî-ðåñïàâí", st.dmActive, function() UI.current_mp = "dm" end)
+                DrawGameCard("dm", "DeathMatch", "10-минутная перестрелка.\nАвто-подсчет фрагов и авто-респавн", st.dmActive, function() UI.current_mp = "dm" end)
                 imgui.SameLine(290)
-                DrawGameCard("potato", "Ãîðÿ÷àÿ êàðòîøêà", "Ïåðåäà÷à ñêèíà çà 10 ñåêóíä.\nÈãðîê ñ êàðòîøêîé ïî òàéìåðó âûáûâàåò", st.potatoActive, function() UI.current_mp = "potato" end)
+                DrawGameCard("potato", "Горячая картошка", "Передача скина за 10 секунд.\nИгрок с картошкой по таймеру выбывает", st.potatoActive, function() UI.current_mp = "potato" end)
 
-            -- ÄÅÐÁÈ
             elseif UI.current_mp == "derby" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Óïðàâëåíèå ìåðîïðèÿòèåì: Äåðáè")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Управление мероприятием: Дерби")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##derby_rules", imgui.ImVec2(280, 28)) then announceRules("derby") end
+                if imgui.Button(u8"Озвучить правила в /smp##derby_rules", imgui.ImVec2(280, 28)) then announceRules("derby") end
                 imgui.SameLine()
-                if imgui.Button(u8"Îòêðûòü îêíî Ìîíèòîðèíãà", imgui.ImVec2(240, 28)) then UI.show_monitor[0] = not UI.show_monitor[0] end
+                if imgui.Button(u8"Открыть окно Мониторинга", imgui.ImVec2(240, 28)) then UI.show_monitor[0] = not UI.show_monitor[0] end
                 imgui.Spacing()
                 DrawRulesEditor("derby")
                 imgui.Spacing()
                 local c_db_sw, _ = ToggleSwitch("##sw_derby", st.derbyActive)
                 if c_db_sw then toggleDerby() end
                 imgui.SameLine()
-                imgui.Text(st.derbyActive and u8"ÌÏ Äåðáè ÇÀÏÓÙÅÍÎ" or u8"ÌÏ Äåðáè ÂÛÊËÞ×ÅÍÎ")
+                imgui.Text(st.derbyActive and u8"МП Дерби ЗАПУЩЕНО" or u8"МП Дерби ВЫКЛЮЧЕНО")
                 imgui.Spacing()
                 imgui.Separator()
                 imgui.Spacing()
                 imgui.Columns(2, "derby_cols", false)
-                imgui.Text(u8"Ïàðàìåòðû âûáûâàíèÿ:")
-                imgui.Text(u8"Ïîðîã HP àâòîìîáèëÿ:")
+                imgui.Text(u8"Параметры выбывания:")
+                imgui.Text(u8"Порог HP автомобиля:")
                 imgui.PushItemWidth(200)
                 if imgui.SliderInt("##derby_hp", B.derby_hp, 250, 800, "%d HP") then
                     st.derbyHpThreshold = B.derby_hp[0]
@@ -3000,17 +2939,17 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 local ch_gv, val_gv = ToggleSwitch("##sw_auto_give_v", st.derbyAutoGiveVeh)
                 if ch_gv then st.derbyAutoGiveVeh = val_gv; saveConfig() end
                 imgui.SameLine()
-                imgui.Text(u8"Àâòî-âûäà÷à àâòî ó÷àñòíèêàì")
+                imgui.Text(u8"Авто-выдача авто участникам")
                 if st.derbyAutoGiveVeh then
-                    if RadioButton(u8"Ðàíäîìíîå àâòî##rg", st.derbyGiveMode == 0) then st.derbyGiveMode = 0; saveConfig() end
+                    if RadioButton(u8"Рандомное авто##rg", st.derbyGiveMode == 0) then st.derbyGiveMode = 0; saveConfig() end
                     imgui.SameLine()
-                    if RadioButton(u8"Âûáðàííîå èç ñïèñêà##sg", st.derbyGiveMode == 1) then st.derbyGiveMode = 1; saveConfig() end
+                    if RadioButton(u8"Выбранное из списка##sg", st.derbyGiveMode == 1) then st.derbyGiveMode = 1; saveConfig() end
                     if st.derbyGiveMode == 1 then
                         local cur_car_id = cars_list[st.derbySelectedCar + 1] or 400
                         local preview = string.format("%d | %s", cur_car_id, vehicle_names[cur_car_id] or "Unknown")
                         imgui.PushItemWidth(240)
                         if imgui.BeginCombo("##car_combo_derby", u8(preview)) then
-                            imgui.InputTextWithHint("##search_car", u8("Ïîèñê..."), B.car_search, 64)
+                            imgui.InputTextWithHint("##search_car", u8("Поиск..."), B.car_search, 64)
                             local sText = string.lower(ffi.string(B.car_search))
                             imgui.BeginChild("##car_scroll", imgui.ImVec2(0, 160), false)
                             for idx, id in ipairs(cars_list) do
@@ -3033,12 +2972,12 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 local ch_int, val_int = ToggleSwitch("##derby_check_int", st.derbyCheckInt)
                 if ch_int then st.derbyCheckInt = val_int; saveConfig() end
                 imgui.SameLine()
-                imgui.Text(u8"Ïðèâÿçêà ê èíòåðüåðó 85")
+                imgui.Text(u8"Привязка к интерьеру 85")
                 imgui.NextColumn()
-                imgui.Text(u8"Ëîãè äåéñòâèé Äåðáè:")
+                imgui.Text(u8"Логи действий Дерби:")
                 imgui.BeginChild("##DerbyLogsFrame", imgui.ImVec2(0, 220), true)
                 if #event_logs == 0 then
-                    imgui.TextDisabled(u8"Ëîãè ïîêà ïóñòû...")
+                    imgui.TextDisabled(u8"Логи пока пусты...")
                 else
                     for _, log in ipairs(event_logs) do
                         imgui.TextWrapped(u8(log))
@@ -3047,126 +2986,121 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
                 imgui.EndChild()
                 imgui.Columns(1)
 
-            -- ÑÅÊÒÎÐÛ
             elseif UI.current_mp == "sectors" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìåðîïðèÿòèå: Ñåêòîðû (Çàðàæåííûå çîíû)")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Мероприятие: Секторы (Зараженные зоны)")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##sec_rules", imgui.ImVec2(-1, 30)) then announceRules("sectors") end
+                if imgui.Button(u8"Озвучить правила в /smp##sec_rules", imgui.ImVec2(-1, 30)) then announceRules("sectors") end
                 imgui.Spacing()
                 DrawRulesEditor("sectors")
                 imgui.Spacing()
                 imgui.Columns(2, "sec_sub_cols", false)
-                imgui.Text(u8"Ðàçìåòêà 4 ñåêòîðîâ:")
+                imgui.Text(u8"Разметка 4 секторов:")
                 local c_s_setup, _ = ToggleSwitch("##sw_sec_mode", st.sectorSetupMode)
                 if c_s_setup then toggleSectorSetup() end
                 imgui.SameLine()
-                imgui.Text(st.sectorSetupMode and u8"Ðàçìåòêà ñåêòîðîâ ÂÊË" or u8"Âûêëþ÷åíà")
+                imgui.Text(st.sectorSetupMode and u8"Разметка секторов ВКЛ" or u8"Выключена")
                 imgui.Spacing()
-                imgui.Text(u8"Ðàçìåòêà îáùåé çîíû ÌÏ:")
+                imgui.Text(u8"Разметка общей зоны МП:")
                 local c_z_setup, _ = ToggleSwitch("##sw_zone_mode", st.stZoneSetupMode)
                 if c_z_setup then toggleStZoneSetup() end
                 imgui.SameLine()
-                imgui.Text(st.stZoneSetupMode and u8"Ðàçìåòêà çîíû ÂÊË" or u8"Âûêëþ÷åíà")
+                imgui.Text(st.stZoneSetupMode and u8"Разметка зоны ВКЛ" or u8"Выключена")
                 imgui.NextColumn()
-                imgui.Text(u8"Çàïóñê ðàóíäà ñåêòîðîâ:")
-                if imgui.Button(u8"Ñëó÷àéíûé ÁÅÇÎÏÀÑÍÛÉ ñåêòîð", imgui.ImVec2(240, 28)) then runSectorRound(true, nil) end
-                if imgui.Button(u8"Ñëó÷àéíûé ÇÀÐÀÆÅÍÍÛÉ ñåêòîð", imgui.ImVec2(240, 28)) then runSectorRound(false, nil) end
+                imgui.Text(u8"Запуск раунда секторов:")
+                if imgui.Button(u8"Случайный БЕЗОПАСНЫЙ сектор", imgui.ImVec2(240, 28)) then runSectorRound(true, nil) end
+                if imgui.Button(u8"Случайный ЗАРАЖЕННЫЙ сектор", imgui.ImVec2(240, 28)) then runSectorRound(false, nil) end
                 imgui.Spacing()
-                imgui.Text(u8"Óäàëèòü ñåêòîð:")
+                imgui.Text(u8"Удалить сектор:")
                 for _, letter in ipairs(SECTOR_NAMES) do
                     imgui.SameLine()
                     if imgui.Button(letter .. "##del_btn", imgui.ImVec2(30, 22)) then deleteSector(letter) end
                 end
                 imgui.Columns(1)
 
-            -- ÑÂÅÒÎÔÎÐ
             elseif UI.current_mp == "rlgl" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìåðîïðèÿòèå: Ñâåòîôîð (Êðàñíûé / Çåëåíûé)")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Мероприятие: Светофор (Красный / Зеленый)")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##rlgl_rules", imgui.ImVec2(-1, 30)) then announceRules("rlgl") end
+                if imgui.Button(u8"Озвучить правила в /smp##rlgl_rules", imgui.ImVec2(-1, 30)) then announceRules("rlgl") end
                 imgui.Spacing()
                 DrawRulesEditor("rlgl")
                 imgui.Spacing()
                 local c_rl, _ = ToggleSwitch("##sw_rlgl", st.enabled)
                 if c_rl then toggleRLGL() end
                 imgui.SameLine()
-                imgui.Text(st.enabled and u8"Ñâåòîôîð ÂÊËÞ×ÅÍ" or u8"Ñâåòîôîð ÂÛÊËÞ×ÅÍ")
+                imgui.Text(st.enabled and u8"Светофор ВКЛЮЧЕН" or u8"Светофор ВЫКЛЮЧЕН")
                 imgui.Spacing()
                 if st.enabled then
-                    if imgui.Button(u8"Ïîäàòü ñèãíàë: ÇÅËÅÍÛÉ ÑÂÅÒ", imgui.ImVec2(240, 32)) then sendRLGLSignal(true) end
+                    if imgui.Button(u8"Подать сигнал: ЗЕЛЕНЫЙ СВЕТ", imgui.ImVec2(240, 32)) then sendRLGLSignal(true) end
                     imgui.SameLine()
-                    if imgui.Button(u8"Ïîäàòü ñèãíàë: ÊÐÀÑÍÛÉ ÑÂÅÒ", imgui.ImVec2(240, 32)) then sendRLGLSignal(false) end
+                    if imgui.Button(u8"Подать сигнал: КРАСНЫЙ СВЕТ", imgui.ImVec2(240, 32)) then sendRLGLSignal(false) end
                 end
 
-            -- ÑÒÓËÜ×ÈÊÈ
             elseif UI.current_mp == "chairs" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìåðîïðèÿòèå: Ñòóëü÷èêè (Çîíû ïàðêîâêè)")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Мероприятие: Стульчики (Зоны парковки)")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##chairs_rules", imgui.ImVec2(-1, 30)) then announceRules("chairs") end
+                if imgui.Button(u8"Озвучить правила в /smp##chairs_rules", imgui.ImVec2(-1, 30)) then announceRules("chairs") end
                 imgui.Spacing()
                 DrawRulesEditor("chairs")
                 imgui.Spacing()
                 local c_st, _ = ToggleSwitch("##sw_stul_round", st.stulActive)
                 if c_st then toggleStulGame() end
                 imgui.SameLine()
-                imgui.Text(st.stulActive and u8"Ðàóíä Ñòóëü÷èêîâ ÈÄÅÒ" or u8"Ðàóíä îñòàíîâëåí")
+                imgui.Text(st.stulActive and u8"Раунд Стульчиков ИДЕТ" or u8"Раунд остановлен")
                 imgui.Spacing()
-                imgui.Text(u8"Àêòèâèðîâàòü çîíû (ïðèìåð: 1-5, 8, 10-15):")
+                imgui.Text(u8"Активировать зоны (пример: 1-5, 8, 10-15):")
                 imgui.PushItemWidth(250)
                 imgui.InputText("##in_zones", B.zones, 128)
                 imgui.PopItemWidth()
                 imgui.SameLine()
-                if imgui.Button(u8"Ïðèìåíèòü çîíû", imgui.ImVec2(140, 24)) then applyChairsZones(ffi.string(B.zones)) end
+                if imgui.Button(u8"Применить зоны", imgui.ImVec2(140, 24)) then applyChairsZones(ffi.string(B.zones)) end
                 imgui.Spacing()
-                if imgui.Button(u8"Ñáðîñèòü âñå çîíû", imgui.ImVec2(160, 26)) then resetChairsZones() end
+                if imgui.Button(u8"Сбросить все зоны", imgui.ImVec2(160, 26)) then resetChairsZones() end
 
-            -- DM
             elseif UI.current_mp == "dm" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìåðîïðèÿòèå: DeathMatch Àðåíà")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Мероприятие: DeathMatch Арена")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##dm_rules", imgui.ImVec2(-1, 30)) then announceRules("dm") end
+                if imgui.Button(u8"Озвучить правила в /smp##dm_rules", imgui.ImVec2(-1, 30)) then announceRules("dm") end
                 imgui.Spacing()
                 DrawRulesEditor("dm")
                 imgui.Spacing()
                 local c_dm_sw, _ = ToggleSwitch("##sw_dm", st.dmActive)
                 if c_dm_sw then toggleDM() end
                 imgui.SameLine()
-                imgui.Text(st.dmActive and u8"ÌÏ DeathMatch ÇÀÏÓÙÅÍÎ" or u8"ÌÏ DeathMatch ÂÛÊËÞ×ÅÍÎ")
+                imgui.Text(st.dmActive and u8"МП DeathMatch ЗАПУЩЕНО" or u8"МП DeathMatch ВЫКЛЮЧЕНО")
 
-            -- ÊÀÐÒÎØÊÀ
             elseif UI.current_mp == "potato" then
-                if imgui.Button(u8"< Íàçàä â êàòàëîã", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
+                if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
-                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìåðîïðèÿòèå: Ãîðÿ÷àÿ êàðòîøêà")
+                imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Мероприятие: Горячая картошка")
                 imgui.Spacing()
-                if imgui.Button(u8"Îçâó÷èòü ïðàâèëà â /smp##potato_rules", imgui.ImVec2(-1, 30)) then announceRules("potato") end
+                if imgui.Button(u8"Озвучить правила в /smp##potato_rules", imgui.ImVec2(-1, 30)) then announceRules("potato") end
                 imgui.Spacing()
                 DrawRulesEditor("potato")
                 imgui.Spacing()
                 local c_pt_sw, _ = ToggleSwitch("##sw_potato", st.potatoActive)
                 if c_pt_sw then togglePotato() end
                 imgui.SameLine()
-                imgui.Text(st.potatoActive and u8"ÌÏ 'Êàðòîøêà' ÀÊÒÈÂÍÎ" or u8"Êàðòîøêà ÂÛÊËÞ×ÅÍÀ")
+                imgui.Text(st.potatoActive and u8"МП 'Картошка' АКТИВНО" or u8"Картошка ВЫКЛЮЧЕНА")
             end
 
-        -- ==================== ÄÎÏ. ÔÓÍÊÖÈÈ ====================
+        -- ==================== ДОП. ФУНКЦИИ ====================
         elseif UI.currentSidebar == 2 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Äîïîëíèòåëüíûå ôóíêöèè è êîíòðîëü")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Дополнительные функции и контроль")
             imgui.Separator()
             imgui.Spacing()
             local c_vd_sw, _ = ToggleSwitch("##sw_voda_addon", st.vodaActive)
             if c_vd_sw then toggleVoda() end
             imgui.SameLine()
-            imgui.Text(st.vodaActive and u8"Àâòî-ñïàâí èç âîäû ÂÊËÞ×ÅÍ" or u8"Àâòî-ñïàâí èç âîäû ÂÛÊËÞ×ÅÍ")
-            imgui.Text(u8"Ïðè÷èíà ñïàâíà èç âîäû â /pm:")
+            imgui.Text(st.vodaActive and u8"Авто-спавн из воды ВКЛЮЧЕН" or u8"Авто-спавн из воды ВЫКЛЮЧЕН")
+            imgui.Text(u8"Причина спавна из воды в /pm:")
             imgui.PushItemWidth(360)
             if imgui.InputText("##voda_reason_in", B.voda_reason, 256) then
                 st.vodaReason = u8:decode(ffi.string(B.voda_reason))
@@ -3179,94 +3113,94 @@ imgui.OnFrame(function() return UI.show[0] end, function(player)
             local ch_m, val_m = ToggleSwitch("##sw_auto_mask", st.antimask)
             if ch_m then st.antimask = val_m; saveConfig() end
             imgui.SameLine()
-            imgui.Text(u8"Àâòî-ñïàâí çà íàäåâàíèå ÌÀÑÊÈ")
+            imgui.Text(u8"Авто-спавн за надевание МАСКИ")
             imgui.SameLine(480)
-            if imgui.Button(u8"Çàñïàâíèòü âñåõ â ìàñêàõ ðÿäîì", imgui.ImVec2(240, 22)) then
+            if imgui.Button(u8"Заспавнить всех в масках рядом", imgui.ImVec2(240, 22)) then
                 runAntiMaskScan()
             end
             local ch_a, val_a = ToggleSwitch("##sw_auto_arm", st.autosparm)
             if ch_a then st.autosparm = val_a; saveConfig() end
             imgui.SameLine()
-            imgui.Text(u8"Àâòî-ñïàâí çà ïîïîëíåíèå ÁÐÎÍÈ")
+            imgui.Text(u8"Авто-спавн за пополнение БРОНИ")
             local ch_h, val_h = ToggleSwitch("##sw_auto_heal", st.autospheal)
             if ch_h then st.autospheal = val_h; saveConfig() end
             imgui.SameLine()
-            imgui.Text(u8"Àâòî-ñïàâí çà ÕÈËË (àïòå÷êè/÷èïñû/óêðîï)")
+            imgui.Text(u8"Авто-спавн за ХИЛЛ (аптечки/чипсы/укроп)")
             local ch_g, val_g = ToggleSwitch("##sw_auto_gun", st.autospgun)
             if ch_g then st.autospgun = val_g; saveConfig() end
             imgui.SameLine()
-            imgui.Text(u8"Àâòî-ðàçîðóæåíèå (/weap) çà äîñòàâàíèå îðóæèÿ")
+            imgui.Text(u8"Авто-разоружение (/weap) за доставание оружия")
 
-        -- ==================== Â ÐÀÄÈÓÑ ====================
+        -- ==================== В РАДИУС ====================
         elseif UI.currentSidebar == 4 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ìàññîâûå êîìàíäû â ðàäèóñå")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Массовые команды в радиусе")
             imgui.Separator()
             imgui.Spacing()
-            imgui.Text(u8"Ðàäèóñ äåéñòâèÿ êîìàíä:")
+            imgui.Text(u8"Радиус действия команд:")
             imgui.PushItemWidth(300)
-            if imgui.SliderInt("##rad_cmd_sl", B.radius_cmd, 5, 150, "%d ì") then
+            if imgui.SliderInt("##rad_cmd_sl", B.radius_cmd, 5, 150, "%d м") then
                 st.radiusCmd = B.radius_cmd[0]
                 saveConfig()
             end
             imgui.PopItemWidth()
             imgui.Spacing()
             local rad = st.radiusCmd
-            if imgui.Button(u8"Âûäàòü 100 HP", imgui.ImVec2(180, 30)) then sampSendChat("/hpall " .. rad) end
+            if imgui.Button(u8"Выдать 100 HP", imgui.ImVec2(180, 30)) then sampSendChat("/hpall " .. rad) end
             imgui.SameLine()
-            if imgui.Button(u8"Âûäàòü 100 Armour", imgui.ImVec2(180, 30)) then sampSendChat("/armourall " .. rad) end
+            if imgui.Button(u8"Выдать 100 Armour", imgui.ImVec2(180, 30)) then sampSendChat("/armourall " .. rad) end
             imgui.SameLine()
-            if imgui.Button(u8"Âûäàòü ãîëîä âñåõ", imgui.ImVec2(180, 30)) then sampSendChat("/eatall " .. rad) end
-            if imgui.Button(u8"Îáíóëèòü áðîíþ", imgui.ImVec2(180, 30)) then sampSendChat("/unarmourall " .. rad) end
+            if imgui.Button(u8"Выдать голод всех", imgui.ImVec2(180, 30)) then sampSendChat("/eatall " .. rad) end
+            if imgui.Button(u8"Обнулить броню", imgui.ImVec2(180, 30)) then sampSendChat("/unarmourall " .. rad) end
             imgui.SameLine()
-            if imgui.Button(u8"Çàìîðîçèòü âñåõ", imgui.ImVec2(180, 30)) then sampSendChat("/freezeall " .. rad) end
+            if imgui.Button(u8"Заморозить всех", imgui.ImVec2(180, 30)) then sampSendChat("/freezeall " .. rad) end
             imgui.SameLine()
-            if imgui.Button(u8"Ðàçìîðîçèòü âñåõ", imgui.ImVec2(180, 30)) then sampSendChat("/unfreezeall " .. rad) end
-            if imgui.Button(u8"Âûäàòü àíòè-ðîçûñê", imgui.ImVec2(180, 30)) then sampSendChat("/azakon " .. rad) end
+            if imgui.Button(u8"Разморозить всех", imgui.ImVec2(180, 30)) then sampSendChat("/unfreezeall " .. rad) end
+            if imgui.Button(u8"Выдать анти-розыск", imgui.ImVec2(180, 30)) then sampSendChat("/azakon " .. rad) end
             imgui.SameLine()
-            if imgui.Button(u8"Çàáðàòü âñå îðóæèå", imgui.ImVec2(180, 30)) then sampSendChat("/weapall " .. rad) end
+            if imgui.Button(u8"Забрать все оружие", imgui.ImVec2(180, 30)) then sampSendChat("/weapall " .. rad) end
 
-        -- ==================== ÐÀÇÄÀ×À ÀÂÒÎ ====================
+        -- ==================== РАЗДАЧА АВТО ====================
         elseif UI.currentSidebar == 6 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Ðàçäà÷à òðàíñïîðòà ó÷àñòíèêàì")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Раздача транспорта участникам")
             imgui.Separator()
             imgui.Spacing()
-            imgui.Text(u8"Ðàäèóñ âûäà÷è âîêðóã àäìèíèñòðàòîðà:")
+            imgui.Text(u8"Радиус выдачи вокруг администратора:")
             imgui.PushItemWidth(180)
             if imgui.InputText("##rad_veh", B.rveh_radius, 16) then saveConfig() end
             imgui.PopItemWidth()
-            imgui.Text(u8"ID ìîäåëè àâòîìîáèëÿ:")
+            imgui.Text(u8"ID модели автомобиля:")
             imgui.PushItemWidth(180)
             if imgui.InputText("##model_veh", B.rveh_model, 16) then saveConfig() end
             imgui.PopItemWidth()
             imgui.Spacing()
-            if imgui.Button(u8"Íà÷àòü ðàçäà÷ó òðàíñïîðòà", imgui.ImVec2(220, 32)) then
+            if imgui.Button(u8"Начать раздачу транспорта", imgui.ImVec2(220, 32)) then
                 sampSendChat(string.format("/rplveh %s %s", ffi.string(B.rveh_radius), ffi.string(B.rveh_model)))
             end
 
-        -- ==================== ×¨ÐÍÛÉ ÑÏÈÑÎÊ ====================
+        -- ==================== ЧЁРНЫЙ СПИСОК ====================
         elseif UI.currentSidebar == 7 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"×åðíûé ñïèñîê ó÷àñòíèêîâ")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Черный список участников")
             imgui.Separator()
             imgui.Spacing()
-            imgui.Text(u8"ID èãðîêà îíëàéí:")
+            imgui.Text(u8"ID игрока онлайн:")
             imgui.PushItemWidth(120)
             imgui.InputText("##in_bl_id", B.bl_id, 32)
             imgui.PopItemWidth()
             imgui.SameLine()
-            if imgui.Button(u8"Äîáàâèòü / Óäàëèòü ïî ID", imgui.ImVec2(180, 24)) then
+            if imgui.Button(u8"Добавить / Удалить по ID", imgui.ImVec2(180, 24)) then
                 local id = tonumber(ffi.string(B.bl_id))
                 if id and sampIsPlayerConnected(id) then
                     local nick = sampGetPlayerNickname(id)
                     if st.blacklist[nick] then
                         st.blacklist[nick] = nil
-                        sendMsg(C.GREEN, "Óäàëåí èç ×Ñ: " .. nick)
+                        sendMsg(C.GREEN, "Удален из ЧС: " .. nick)
                     else
                         st.blacklist[nick] = true
-                        sendMsg(C.RED, "Äîáàâëåí â ×Ñ: " .. nick)
+                        sendMsg(C.RED, "Добавлен в ЧС: " .. nick)
                     end
                     saveConfig()
                 else
-                    sendMsg(C.WARN, "Èãðîê íå íàéäåí îíëàéí!")
+                    sendMsg(C.WARN, "Игрок не найден онлайн!")
                 end
             end
             imgui.Spacing()
@@ -3296,7 +3230,7 @@ function main()
     loadConfig()
     loadPresetsFromFile()
 
-    -- Àâòîïðîâåðêà íàëè÷èÿ îáíîâëåíèé
+    -- Проверка наличия обновлений при запуске
     checkScriptUpdate()
 
     local mpPts, sumX, sumY = {}, 0, 0
@@ -3336,6 +3270,15 @@ function main()
         end
     end)
 
+    sampRegisterChatCommand("mpupdate", function()
+        if UpdateUI.new_vers ~= "" then
+            UpdateUI.show[0] = not UpdateUI.show[0]
+        else
+            checkScriptUpdate()
+            sendMsg(C.WARN, "Проверка обновлений запущена...")
+        end
+    end)
+
     sampRegisterChatCommand("mpwin", announceWinner)
     sampRegisterChatCommand("win", announceWinner)
     sampRegisterChatCommand("sector", toggleSectorSetup)
@@ -3354,7 +3297,7 @@ function main()
     sampRegisterChatCommand("czones", resetChairsZones)
     sampRegisterChatCommand("antimask", runAntiMaskScan)
 
-    sendMsg(C.GREEN, "Ñêðèïò óñïåøíî çàïóùåí! Ìåíþ: {FFFFFF}/amp{00FF00} | Îáúÿâèòü ïîáåäó: {FFFF00}/mpwin [ID]")
+    sendMsg(C.GREEN, "Скрипт успешно запущен! Меню: {FFFFFF}/amp{00FF00} | Объявить победу: {FFFF00}/mpwin [ID]")
 
     while true do
         wait(0)
