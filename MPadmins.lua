@@ -17,9 +17,11 @@ local u8       = encoding.UTF8
 local UPDATE_CFG = {
     CURRENT_NUM   = 3.8,
     CURRENT_STR   = "v3.8",
+    -- Прямая ссылка на файл update.ini
     INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/update.ini",
+    -- Прямая ссылка на скачивание самого скрипта
     SCRIPT_URL    = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/MPadmins.lua",
-    TEMP_FILE     = getWorkingDirectory() .. "/update.ini"
+    TEMP_FILE     = getWorkingDirectory() .. "\\update_check.tmp"
 }
 
 local UpdateUI = {
@@ -421,72 +423,91 @@ local function cleanColorCodes(text)
 end
 
 -- ==================== ЛОГИКА АВТООБНОВЛЕНИЯ ====================
-local function parseIniString(content)
-    local data = {}
-    for line in content:gmatch("[^\r\n]+") do
-        line = line:gsub("^%s*(.-)%s*$", "%1")
-        if not line:find("^%[") and not line:find("^;") and not line:find("^#") then
-            local k, v = line:match("^([^=]+)=(.*)$")
-            if k and v then
-                k = k:gsub("^%s*(.-)%s*$", "%1")
-                v = v:gsub("^%s*(.-)%s*$", "%1")
-                data[k] = v
+
+local function asyncHttpGet(url, resolve, reject)
+    local runner = effil.thread(function(u)
+        local req = require("requests")
+        local ok, resp = pcall(req.get, u, { timeout = 8 })
+        if ok and resp and resp.status_code == 200 then
+            return true, resp.text
+        else
+            return false, ok and (resp and resp.status_code or "err") or tostring(resp)
+        end
+    end)(url)
+
+    lua_thread.create(function()
+        while true do
+            local status, err = runner:status()
+            if not err then
+                if status == "completed" then
+                    local ok, result = runner:get()
+                    if ok then
+                        if resolve then resolve(result) end
+                    else
+                        if reject then reject(result) end
+                    end
+                    return
+                elseif status == "canceled" then
+                    if reject then reject("canceled") end
+                    return
+                end
+            else
+                if reject then reject(err) end
+                return
             end
+            wait(50)
+        end
+    end)
+end
+
+local function parseIniText(text)
+    local t = {}
+    for line in text:gmatch("[^\r\n]+") do
+        local key, val = line:match("^([%w_]+)%s*=%s*(.+)$")
+        if key and val then
+            key = key:gsub("^%s*(.-)%s*$", "%1")
+            val = val:gsub("^%s*(.-)%s*$", "%1")
+            t[key] = val
         end
     end
-    return data
+    return t
 end
 
 local function checkScriptUpdate(is_manual)
     if is_manual then
-        sendMsg(C.WARN, "Проверка наличия обновлений на сервере...")
+        sendMsg(C.WARN, "Проверка обновлений на сервере...")
     end
 
-    downloadUrlToFile(UPDATE_CFG.INFO_URL, UPDATE_CFG.TEMP_FILE, function(id, status)
-        if status == dlstatus.STATUS_ENDDOWNLOADDATA then
-            local f = io.open(UPDATE_CFG.TEMP_FILE, "r")
-            if not f then
-                if is_manual then
-                    sendMsg(C.RED, "Не удалось открыть скачанный update.ini!")
-                end
-                return
-            end
+    asyncHttpGet(UPDATE_CFG.INFO_URL, function(response_text)
+        local data = parseIniText(response_text)
+        local server_vers = tonumber(data["vers"])
 
-            local content = f:read("*a")
-            f:close()
-            os.remove(UPDATE_CFG.TEMP_FILE)
+        if is_manual then
+            sendMsg(C.WHITE, string.format("Текущая версия: {00FF00}%s{FFFFFF} | На сервере: {FFFF00}%s", UPDATE_CFG.CURRENT_STR, data["vers_text"] or tostring(server_vers or "не указана")))
+        end
 
-            local iniData = parseIniString(content)
-            local server_vers = tonumber(iniData["vers"])
+        if server_vers and server_vers > UPDATE_CFG.CURRENT_NUM then
+            UpdateUI.new_vers  = data["vers_text"] or tostring(server_vers)
+            UpdateUI.changelog = {}
 
-            if server_vers then
-                if server_vers > UPDATE_CFG.CURRENT_NUM then
-                    UpdateUI.new_vers  = iniData["vers_text"] or tostring(server_vers)
-                    UpdateUI.changelog = {}
-
-                    for i = 1, 15 do
-                        local ch = iniData["change" .. i]
-                        if ch and #ch > 0 then
-                            table.insert(UpdateUI.changelog, ch)
-                        end
-                    end
-
-                    UpdateUI.show[0] = true
-                    sendMsg(C.GREEN, string.format("Доступно новое обновление: %s!", UpdateUI.new_vers))
-                else
-                    if is_manual then
-                        sendMsg(C.GREEN, string.format("У вас установлена последняя версия скрипта (%s)!", UPDATE_CFG.CURRENT_STR))
-                    end
-                end
-            else
-                if is_manual then
-                    sendMsg(C.RED, "Ошибка: в файле update.ini не найдена строка 'vers'!")
+            for i = 1, 10 do
+                local line = data["change" .. i]
+                if line and #line > 0 then
+                    -- Сохраняем строку как есть (она уже приходит в UTF-8 с GitHub)
+                    table.insert(UpdateUI.changelog, line)
                 end
             end
-        elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
+
+            UpdateUI.show[0] = true
+            sendMsg(C.GREEN, "Найдена новая версия! Открыто окно установки.")
+        else
             if is_manual then
-                sendMsg(C.RED, "Ошибка соединения с GitHub! Проверьте ссылку на update.ini.")
+                sendMsg(C.GREEN, "У вас установлена самая последняя версия скрипта!")
             end
+        end
+    end, function(err)
+        if is_manual then
+            sendMsg(C.RED, "Не удалось проверить обновления (ошибка соединения)!")
         end
     end)
 end
@@ -494,9 +515,13 @@ end
 local function startScriptDownload()
     if UpdateUI.downloading then return end
     UpdateUI.downloading = true
+    sendMsg(C.WARN, "Загрузка новой версии скрипта...")
 
-    downloadUrlToFile(UPDATE_CFG.SCRIPT_URL, thisScript().path, function(id, status)
-        if status == dlstatus.STATUS_ENDDOWNLOADDATA then
+    asyncHttpGet(UPDATE_CFG.SCRIPT_URL, function(new_code)
+        local f = io.open(thisScript().path, "wb")
+        if f then
+            f:write(new_code)
+            f:close()
             UpdateUI.downloading = false
             UpdateUI.show[0] = false
             sendMsg(C.GREEN, "Скрипт успешно обновлён! Перезагрузка...")
@@ -504,10 +529,13 @@ local function startScriptDownload()
                 wait(600)
                 thisScript():reload()
             end)
-        elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
+        else
             UpdateUI.downloading = false
-            sendMsg(C.RED, "Ошибка при скачивании скрипта! Проверьте ссылку на MPadmins.lua.")
+            sendMsg(C.RED, "Ошибка: не удалось перезаписать файл скрипта (нет прав)!")
         end
+    end, function(err)
+        UpdateUI.downloading = false
+        sendMsg(C.RED, "Ошибка при скачивании файла скрипта с GitHub!")
     end)
 end
 
@@ -526,12 +554,13 @@ imgui.OnFrame(function() return UpdateUI.show[0] end, function()
         imgui.TextColored(imgui.ImVec4(0.9, 0.7, 0.2, 1.0), u8"Список изменений / улучшений:")
         imgui.Spacing()
 
-        imgui.BeginChild("##ChangelogScroll", imgui.ImVec2(-1, 130), true)
+        imgui.BeginChild("##ChangelogScroll", imgui.ImVec2(-1, 130), true)  
         if #UpdateUI.changelog == 0 then
             imgui.BulletText(u8"Общие улучшения стабильности и исправление ошибок.")
         else
             for _, line in ipairs(UpdateUI.changelog) do
-                imgui.BulletText(u8(line))
+                -- ПИШЕМ БЕЗ u8(), так как строка уже в UTF-8!
+                imgui.BulletText(line)
             end
         end
         imgui.EndChild()
