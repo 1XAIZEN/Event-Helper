@@ -14,8 +14,8 @@ local u8       = encoding.UTF8
 
 -- ==================== НАСТРОЙКИ АВТООБНОВЛЕНИЯ ====================
 local UPDATE_CFG = {
-    CURRENT_NUM   = 3.7,
-    CURRENT_STR   = "v3.7",
+    CURRENT_NUM   = 3.8,
+    CURRENT_STR   = "v3.8",
     -- Вставьте сюда ВАШИ Raw-ссылки с GitHub:
     INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/update.json",
     SCRIPT_URL    = "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins.lua",
