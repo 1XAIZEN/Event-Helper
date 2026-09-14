@@ -17,8 +17,8 @@ local UPDATE_CFG = {
     CURRENT_NUM   = 3.7,
     CURRENT_STR   = "v3.7",
     -- Вставьте сюда ВАШИ Raw-ссылки с GitHub:
-    INFO_URL      = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/update.json",
-    SCRIPT_URL    = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/MPadmins.lua",
+    INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/update.json",
+    SCRIPT_URL    = "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins.lua",
     TEMP_FILE     = getWorkingDirectory() .. "/config/MPadmins_update.json"
 }
 
