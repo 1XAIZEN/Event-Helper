@@ -519,9 +519,17 @@ local function startScriptDownload()
     sendMsg(C.WARN, "Загрузка новой версии скрипта...")
 
     asyncHttpGet(UPDATE_CFG.SCRIPT_URL, function(new_code)
+        -- Конвертируем полученный с GitHub код из UTF-8 в родную для скрипта CP1251
+        local ok, converted_code = pcall(function()
+            return u8:decode(new_code)
+        end)
+
+        -- Если декодирование прошло успешно, берем сконвертированный код, иначе исходный
+        local final_code = ok and converted_code or new_code
+
         local f = io.open(thisScript().path, "wb")
         if f then
-            f:write(new_code)
+            f:write(final_code)
             f:close()
             UpdateUI.downloading = false
             UpdateUI.show[0] = false
