@@ -1,6 +1,6 @@
 {
   "latest": "3.8",
-  "updateurl": "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins%20(2).lua",
+  "updateurl": "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins.lua",
   "changelog": [
     "Добавлена возможность редактировать правила мероприятий прямо в игре",
     "Добавлено автосохранение правил и готовых пресетов в конфиг",
