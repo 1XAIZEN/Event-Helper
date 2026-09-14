@@ -9,6 +9,7 @@ local imgui    = require("mimgui")
 local ffi      = require("ffi")
 local encoding = require("encoding")
 local dlstatus = require("moonloader").download_status
+local inicfg   = require("inicfg")
 encoding.default = "CP1251"
 local u8       = encoding.UTF8
 
@@ -17,9 +18,9 @@ local UPDATE_CFG = {
     CURRENT_NUM   = 3.8,
     CURRENT_STR   = "v3.8",
     -- Вставьте сюда ВАШИ Raw-ссылки с GitHub:
-    INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/update.json",
+    INFO_URL      = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/update.ini",
     SCRIPT_URL    = "https://github.com/1XAIZEN/Event-Helper/raw/refs/heads/main/MPadmins.lua",
-    TEMP_FILE     = getWorkingDirectory() .. "/config/MPadmins_update.json"
+    TEMP_FILE     = getWorkingDirectory() .. "/update.ini"
 }
 
 local UpdateUI = {
@@ -422,26 +423,32 @@ end
 
 -- ==================== ЛОГИКА АВТООБНОВЛЕНИЯ ====================
 local function checkScriptUpdate()
-    if UPDATE_CFG.INFO_URL:find("YOUR_USERNAME") then
-        return -- URL еще не настроен
-    end
+    if UPDATE_CFG.INFO_URL:find("НИК/РЕПОЗИТОРИЙ") then return end
+    
     downloadUrlToFile(UPDATE_CFG.INFO_URL, UPDATE_CFG.TEMP_FILE, function(id, status)
         if status == dlstatus.STATUS_ENDDOWNLOADDATA then
             if doesFileExist(UPDATE_CFG.TEMP_FILE) then
-                local f = io.open(UPDATE_CFG.TEMP_FILE, "r")
-                if f then
-                    local content = f:read("*a")
-                    f:close()
-                    os.remove(UPDATE_CFG.TEMP_FILE)
+                -- Читаем ini через встроенный модуль inicfg
+                local updateIni = inicfg.load(nil, UPDATE_CFG.TEMP_FILE)
+                os.remove(UPDATE_CFG.TEMP_FILE) -- удаляем временный файл
 
-                    local ok, data = pcall(decodeJson, content)
-                    if ok and type(data) == "table" and data.version then
-                        if tonumber(data.version) > UPDATE_CFG.CURRENT_NUM then
-                            UpdateUI.new_vers  = data.version_text or tostring(data.version)
-                            UpdateUI.changelog = data.changelog or {}
-                            UpdateUI.show[0]   = true
-                            sendMsg(C.WARN, "Доступно новое обновление: " .. C.GREEN .. UpdateUI.new_vers)
+                if updateIni and updateIni.info and updateIni.info.vers then
+                    local server_vers = tonumber(updateIni.info.vers)
+                    if server_vers and server_vers > UPDATE_CFG.CURRENT_NUM then
+                        UpdateUI.new_vers  = updateIni.info.vers_text or tostring(server_vers)
+                        UpdateUI.changelog = {}
+                        
+                        -- Считываем строки изменений change1, change2, change3...
+                        for i = 1, 10 do
+                            local line = updateIni.info["change" .. i]
+                            if line and #line > 0 then
+                                table.insert(UpdateUI.changelog, line)
+                            end
                         end
+                        
+                        -- Открываем окно обновления на экране
+                        UpdateUI.show[0] = true
+                        sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] Доступно обновление: {00FF00}" .. UpdateUI.new_vers, -1)
                     end
                 end
             end
@@ -457,14 +464,14 @@ local function startScriptDownload()
         if status == dlstatus.STATUS_ENDDOWNLOADDATA then
             UpdateUI.downloading = false
             UpdateUI.show[0] = false
-            sendMsg(C.GREEN, "Скрипт успешно обновлён до версии " .. UpdateUI.new_vers .. "! Перезагрузка...")
+            sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] {00FF00}Скрипт успешно обновлён! Перезагрузка...", -1)
             lua_thread.create(function()
-                wait(800)
+                wait(600)
                 thisScript():reload()
             end)
         elseif status == dlstatus.STATUS_SHUTDOWN or status == 404 then
             UpdateUI.downloading = false
-            sendMsg(C.RED, "Ошибка при загрузке обновления! Проверьте ссылку на скрипт.")
+            sampAddChatMessage("{FFFFFF}[{FF3333}MP-Manager{FFFFFF}] {FF0000}Ошибка при скачивании обновления!", -1)
         end
     end)
 end
