@@ -1,6 +1,6 @@
 script_name("MPadmins")
-script_version("2.0")
-script_author("Jose")
+script_version("3.0")
+script_author("Jose & Assistant")
 
 local se       = require("samp.events")
 local bit      = require("bit")
@@ -15,8 +15,8 @@ local u8 = encoding.UTF8
 
 -- ==================== КОНФИГУРАЦИЯ И СЕТЬ ====================
 local UPDATE_CFG = {
-    CURRENT_NUM = 2.0,
-    CURRENT_STR = "v1.2",
+    CURRENT_NUM = 3.0,
+    CURRENT_STR = "v3.0",
     INFO_URL    = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/main/update.ini",
     SCRIPT_URL  = "https://raw.githubusercontent.com/1XAIZEN/Event-Helper/refs/heads/main/MPadmins.lua"
 }
@@ -37,6 +37,12 @@ local CFG = {
     SECTOR_SPAWN_CD = 1.0,
     SECTOR_MIN_Z    = 200.0,
     MASK_COLOR      = 23486046
+}
+
+local TP_CFG = {
+    COOLDOWN_SET  = 30,
+    COOLDOWN_TP   = 15,
+    COOLDOWN_WARN = 5
 }
 
 local C = {
@@ -319,6 +325,7 @@ local st = {
     autosparm           = false,
     antimask            = false,
     autospgun           = false,
+    tpMarkersActive     = false, -- Система ТП-меток (F / Alt)
     radiusCmd           = 50,
     giveGunId           = 24,
     giveGunAmmo         = 100,
@@ -328,6 +335,15 @@ local st = {
     aoPrizeList         = {},
     aoSelectedPrize     = 9,
     aokd                = 1200
+}
+
+-- Состояния и очереди системы меток
+local tpMarkers = {
+    currentWorld    = 0,
+    silentCheckVw   = false,
+    players         = {},
+    cmdQueue        = {},
+    pendingActions  = {}
 }
 
 local UI = {
@@ -355,7 +371,8 @@ local Opt = {
 
 local TH = {
     stul = nil, rveh = nil, derby = nil, dmTimer = nil,
-    voda = nil, sector = nil, rules = nil, potato = nil, chairsTrack = nil
+    voda = nil, sector = nil, rules = nil, potato = nil, chairsTrack = nil,
+    tpQueue = nil, tpWatch = nil
 }
 
 local B = {
@@ -404,7 +421,7 @@ local UpdateUI = {
 
 local RuleEditBuffers = {}
 local pointMarker = nil
-local pZones, mpZoneData, fontText, fontHUD, fontSector, screenW, screenH = {}, nil, nil, nil, nil, 0, 0
+local pZones, mpZoneData, fontText, fontHUD, fontSector, fontTPMarker, screenW, screenH = {}, nil, nil, nil, nil, nil, 0, 0
 local NEAR_PLANE_EPSILON = 1e-3
 local event_logs = {}
 local players_monitor_list = {}
@@ -454,8 +471,21 @@ local function sampIsPlayerStreamed(id)
     return (res and doesCharExist(ped))
 end
 
+local function safeGetCharCoordinates(ped)
+    if not ped or ped <= 0 or not doesCharExist(ped) or isCharDead(ped) then
+        return false, 0, 0, 0
+    end
+    local ok, x, y, z = pcall(getCharCoordinates, ped)
+    if ok and x and y and z then
+        return true, x, y, z
+    end
+    return false, 0, 0, 0
+end
+
 local function isValidTargetPed(ped)
-    if not ped or ped == PLAYER_PED or not doesCharExist(ped) then return false, -1 end
+    if not ped or ped == PLAYER_PED or not doesCharExist(ped) or isCharDead(ped) then 
+        return false, -1 
+    end
     local res, id = sampGetPlayerIdByCharHandle(ped)
     if not res or not sampIsPlayerConnected(id) or isPlayerBlacklisted(id) or id == st.myId then
         return false, -1
@@ -500,6 +530,43 @@ local function spawnAndNotify(target, pmType, pmText, customDelay)
     sampSendChat(string.format("/pm %s %d %s", nick, pmType or 1, pmText or ""), -1)
     addEventLog(string.format("Спавн: %s (%s)", nick, pmText or "МП"))
     wait(math.floor((customDelay or CFG.SPAWN_CD) * 1000))
+end
+
+-- ==================== СИСТЕМА ТП-МАРКЕРОВ ====================
+local function addTpCommand(cmd)
+    table.insert(tpMarkers.cmdQueue, cmd)
+end
+
+local function processTpAction(act, world)
+    local p = tpMarkers.players[act.playerId]
+    if not p then return end
+
+    if act.actionType == "SET" then
+        p.tpPos = {
+            x = act.pos.x,
+            y = act.pos.y,
+            z = act.pos.z,
+            world = world,
+            interior = getActiveInterior()
+        }
+        p.lastSetTime = act.time
+        p.lastWarnSet = 0
+        addTpCommand(string.format("/pm %s 0 :true: Телепорт установлен! Для телепорта нажмите ALT", act.nick))
+        addEventLog(string.format("ТП Метка: %s[%d] установил точку (VW: %d)", act.nick, act.playerId, world))
+
+    elseif act.actionType == "TP" then
+        if p.tpPos ~= nil then
+            addTpCommand(string.format("/plpos %d %.3f %.3f %.3f %d %d", 
+                act.playerId, 
+                p.tpPos.x, 
+                p.tpPos.y, 
+                p.tpPos.z, 
+                p.tpPos.world, 
+                p.tpPos.interior
+            ))
+            addEventLog(string.format("ТП Метка: телепортация %s[%d]", act.nick, act.playerId))
+        end
+    end
 end
 
 -- ==================== АВТООБНОВЛЕНИЕ ====================
@@ -637,6 +704,7 @@ local function saveConfig()
         autosparm        = st.autosparm,
         antimask         = st.antimask,
         autospgun        = st.autospgun,
+        tpMarkersActive  = st.tpMarkersActive,
         mpRules          = MP_RULES
     }
     local f = io.open(CFG.CONFIG_PATH, "w")
@@ -691,6 +759,7 @@ local function loadConfig()
     if cfgData.autosparm ~= nil   then st.autosparm = cfgData.autosparm end
     if cfgData.antimask ~= nil    then st.antimask = cfgData.antimask end
     if cfgData.autospgun ~= nil   then st.autospgun = cfgData.autospgun end
+    if cfgData.tpMarkersActive ~= nil then st.tpMarkersActive = cfgData.tpMarkersActive end
 
     if type(cfgData.mpRules) == "table" then
         for k, lines in pairs(cfgData.mpRules) do
@@ -1507,17 +1576,19 @@ local function togglePotato()
 
     local function getStreamedCandidates(excludeId)
         local candidates = {}
+        if not doesCharExist(PLAYER_PED) then return candidates end
         local myX, myY, myZ = getCharCoordinates(PLAYER_PED)
-        local myInterior = getActiveInterior()
 
         for _, ped in ipairs(getAllChars()) do
             if ped ~= PLAYER_PED and doesCharExist(ped) and not isCharDead(ped) and not isCharInAnyCar(ped) then
                 local res, id = sampGetPlayerIdByCharHandle(ped)
                 if res and sampIsPlayerConnected(id) and id ~= st.myId and id ~= excludeId and not isPlayerBlacklisted(id) then
-                    local px, py, pz = getCharCoordinates(ped)
-                    local dist = getDistanceBetweenCoords3d(myX, myY, myZ, px, py, pz)
-                    if dist <= 100.0 and math.abs(px) > 2.0 and math.abs(py) > 2.0 then
-                        table.insert(candidates, id)
+                    if doesCharExist(ped) then
+                        local px, py, pz = getCharCoordinates(ped)
+                        local dist = getDistanceBetweenCoords3d(myX, myY, myZ, px, py, pz)
+                        if dist <= 100.0 and math.abs(px) > 2.0 and math.abs(py) > 2.0 then
+                            table.insert(candidates, id)
+                        end
                     end
                 end
             end
@@ -1553,6 +1624,11 @@ local function togglePotato()
             wait(100)
             local holderValid = false
             local curHolderPed = nil
+
+            if not doesCharExist(PLAYER_PED) then
+                st.potatoActive = false
+                break
+            end
 
             if st.potatoHolder and sampIsPlayerConnected(st.potatoHolder) then
                 local exH, pHandle = sampGetCharHandleBySampPlayerId(st.potatoHolder)
@@ -1610,32 +1686,34 @@ local function togglePotato()
                 end
             end
 
-            if holderValid and curHolderPed then
+            if holderValid and curHolderPed and doesCharExist(curHolderPed) then
                 local hx, hy, hz = getCharCoordinates(curHolderPed)
 
                 for _, ped in ipairs(getAllChars()) do
                     if ped ~= PLAYER_PED and ped ~= curHolderPed and doesCharExist(ped) and not isCharDead(ped) and not isCharInAnyCar(ped) then
                         local res, targetId = sampGetPlayerIdByCharHandle(ped)
                         if res and sampIsPlayerConnected(targetId) and not isPlayerBlacklisted(targetId) then
-                            if targetId ~= st.potatoHolder and (targetId ~= st.lastHolder or os.clock() > st.antiBackCooldown) then
-                                local ox, oy, oz = getCharCoordinates(ped)
-                                if math.abs(ox) > 2.0 and math.abs(oy) > 2.0 then
-                                    if getDistanceBetweenCoords3d(hx, hy, hz, ox, oy, oz) <= 1.5 then
-                                        local oldId = st.potatoHolder
-                                        local oldNick = sampGetPlayerNickname(oldId)
-                                        local newNick = sampGetPlayerNickname(targetId)
+                            if targetId ~= st.potatoHolder and (targetId ~= st.lastHolder or os.clock() > (st.antiBackCooldown or 0)) then
+                                if doesCharExist(ped) and doesCharExist(curHolderPed) then
+                                    local ox, oy, oz = getCharCoordinates(ped)
+                                    if math.abs(ox) > 2.0 and math.abs(oy) > 2.0 then
+                                        if getDistanceBetweenCoords3d(hx, hy, hz, ox, oy, oz) <= 1.5 then
+                                            local oldId = st.potatoHolder
+                                            local oldNick = sampGetPlayerNickname(oldId)
+                                            local newNick = sampGetPlayerNickname(targetId)
 
-                                        st.lastHolder = oldId
-                                        st.antiBackCooldown = os.clock() + 3.0
-                                        st.potatoHolder = targetId
-                                        st.potatoTimer = os.clock() + 10.0
+                                            st.lastHolder = oldId
+                                            st.antiBackCooldown = os.clock() + 3.0
+                                            st.potatoHolder = targetId
+                                            st.potatoTimer = os.clock() + 10.0
 
-                                        sampSendChat(string.format("/setskin %d 0 0", oldId))
-                                        sampSendChat(string.format("/setskin %d 104 0", targetId))
-                                        sampSendChat(string.format("/smp %s[%d] передал горячую картошку %s[%d]!", oldNick, oldId, newNick, targetId))
-                                        sampSendChat(string.format("/pm %d 0 Вам передали картошку! У вас 10 секунд!", targetId))
-                                        wait(800)
-                                        break
+                                            sampSendChat(string.format("/setskin %d 0 0", oldId))
+                                            sampSendChat(string.format("/setskin %d 104 0", targetId))
+                                            sampSendChat(string.format("/smp %s[%d] передал горячую картошку %s[%d]!", oldNick, oldId, newNick, targetId))
+                                            sampSendChat(string.format("/pm %d 0 Вам передали картошку! У вас 10 секунд!", targetId))
+                                            wait(800)
+                                            break
+                                        end
                                     end
                                 end
                             end
@@ -2056,9 +2134,9 @@ local function drawHUD(curTime)
             moversCount = moversCount + 1
             if sampIsPlayerConnected(id) then
                 local ex, ped = sampGetCharHandleBySampPlayerId(id)
-                if ex and doesCharExist(ped) then
-                    local px, py, pz = getCharCoordinates(ped)
-                    if isPointOnScreen(px, py, pz, 0) then
+                if ex and ped and doesCharExist(ped) and not isCharDead(ped) then
+                    local ok, px, py, pz = safeGetCharCoordinates(ped)
+                    if ok and isPointOnScreen(px, py, pz, 0) then
                         local cx, cy, cz = getActiveCameraCoordinates()
                         local dist = getDistanceBetweenCoords3d(cx, cy, cz, px, py, pz)
                         if dist <= CFG.DIST then
@@ -2217,6 +2295,25 @@ local function drawSectorsAndSTZone()
     end
 end
 
+local function drawTPMarkers()
+    if not st.tpMarkersActive then return end
+    for pid, pData in pairs(tpMarkers.players) do
+        if pData.tpPos then
+            local x, y, z = pData.tpPos.x, pData.tpPos.y, pData.tpPos.z
+            
+            renderDrawLine3D(x, y, z - 1.0, x, y, z + 1.0, 2, 0xFF00FF00)
+            renderDrawLine3D(x - 0.4, y, z - 1.0, x + 0.4, y, z - 1.0, 2, 0xFF00FF00)
+            renderDrawLine3D(x, y - 0.4, z - 1.0, x, y + 0.4, z - 1.0, 2, 0xFF00FF00)
+
+            local _, sx, sy, sz = convert3DCoordsToScreenEx(x, y, z + 1.2)
+            if sz and sz > 1 and sx and sy then
+                local nick = sampGetPlayerNickname(pid) or ("ID: " .. pid)
+                renderFontDrawText(fontTPMarker, string.format("TP: %s [%d]\nVW: %d | Int: %d", nick, pid, pData.tpPos.world, pData.tpPos.interior), sx - 30, sy, 0xFFFFFFFF)
+            end
+        end
+    end
+end
+
 -- ==================== ПЕРЕХВАТ ПАКЕТОВ И СООБЩЕНИЙ ====================
 function se.onApplyPlayerAnimation(id, animLib, animName, loop, lockX, lockY, freeze, time)
     if isPlayerBlacklisted(id) or id == st.myId then return end
@@ -2232,6 +2329,30 @@ end
 
 function se.onServerMessage(col, text)
     local clear = cleanColorCodes(text)
+
+    if st.tpMarkersActive then
+        local world = string.match(text, "Current world:%s*(%d+)")
+        if world then
+            tpMarkers.currentWorld = tonumber(world)
+            while #tpMarkers.pendingActions > 0 do
+                local act = table.remove(tpMarkers.pendingActions, 1)
+                processTpAction(act, tpMarkers.currentWorld)
+            end
+            if tpMarkers.silentCheckVw then
+                tpMarkers.silentCheckVw = false
+                return false
+            end
+        end
+
+        local targetNick, targetId = string.match(text, "Вы телепортировали игрока (.-)%[ID: (%d+)%]")
+        if targetNick and targetId then
+            targetId = tonumber(targetId)
+            if tpMarkers.players[targetId] then
+                tpMarkers.players[targetId].lastTpTime = os.clock()
+                tpMarkers.players[targetId].lastWarnTp = 0
+            end
+        end
+    end
 
     local admin, sec_str = clear:match("%[Game Event%]%s*A:%s*([%a%d_]+)%s*запустил мероприятие,%s*время действие телепорта:%s*(%d+)%s*сек%.")
     if admin and sec_str and admin == st.myNick then
@@ -2320,9 +2441,38 @@ function se.onPlayerQuit(id)
             if st.dmRespawnQueue[i].id == id then table.remove(st.dmRespawnQueue, i); break end
         end
     end
+    if tpMarkers.players[id] then
+        tpMarkers.players[id] = nil
+    end
+end
+
+function se.onPlayerStreamOut(playerId)
+    if st.tpMarkersActive then
+        local p = tpMarkers.players[playerId]
+        if p and p.tpPos ~= nil then
+            p.tpPos = nil
+            if sampIsPlayerConnected(playerId) then
+                local nick = sampGetPlayerNickname(playerId)
+                if nick then
+                    addTpCommand(string.format("/pm %s 0 :x: Ваш телепорт был удален! Вы пропали с зоны МП", nick))
+                end
+            end
+        end
+    end
 end
 
 function se.onPlayerDeathNotification(killerId, killedId, reason)
+    if st.tpMarkersActive then
+        local p = tpMarkers.players[killedId]
+        if p and p.tpPos ~= nil then
+            p.tpPos = nil
+            local nick = sampGetPlayerNickname(killedId)
+            if nick and sampIsPlayerConnected(killedId) then
+                addTpCommand(string.format("/pm %s 0 :x: Ваш телепорт был удален! Вас убили", nick))
+            end
+        end
+    end
+
     if not st.dmActive then return end
     if killerId and st.dmPlayers[killerId] then
         st.dmPlayers[killerId].kills = st.dmPlayers[killerId].kills + 1
@@ -2338,6 +2488,69 @@ function se.onPlayerDeathNotification(killerId, killedId, reason)
 end
 
 function se.onPlayerSync(id, data)
+    if st.tpMarkersActive and id ~= st.myId and not isPlayerBlacklisted(id) then
+        if not tpMarkers.players[id] then
+            tpMarkers.players[id] = {
+                tpPos = nil,
+                lastSetTime = 0,
+                lastTpTime = 0,
+                lastWarnSet = 0,
+                lastWarnTp  = 0,
+                keys = { F = false, Alt = false }
+            }
+        end
+
+        local p = tpMarkers.players[id]
+        local now = os.clock()
+        local pressF = (bit.band(data.keysData, 16) == 16)
+        local pressAlt = (bit.band(data.keysData, 1024) == 1024)
+
+        if pressF and not p.keys.F then
+            local nick = sampGetPlayerNickname(id)
+            if (now - p.lastSetTime) >= TP_CFG.COOLDOWN_SET then
+                table.insert(tpMarkers.pendingActions, {
+                    actionType = "SET",
+                    playerId = id,
+                    nick = nick,
+                    pos = { x = data.position.x, y = data.position.y, z = data.position.z },
+                    time = now
+                })
+                tpMarkers.silentCheckVw = true
+                sampSendChat("/setvw")
+            else
+                if (now - p.lastWarnSet) >= TP_CFG.COOLDOWN_WARN then
+                    p.lastWarnSet = now
+                    local timeLeft = math.ceil(TP_CFG.COOLDOWN_SET - (now - p.lastSetTime))
+                    addTpCommand(string.format("/pm %s 0 :x: Менять телепорт можно раз в 30 секунд (Осталось: %d сек)", nick, timeLeft))
+                end
+            end
+        end
+
+        if pressAlt and not p.keys.Alt then
+            local nick = sampGetPlayerNickname(id)
+            if p.tpPos ~= nil then
+                if (now - p.lastTpTime) >= TP_CFG.COOLDOWN_TP then
+                    table.insert(tpMarkers.pendingActions, {
+                        actionType = "TP",
+                        playerId = id,
+                        nick = nick,
+                        time = now
+                    })
+                    tpMarkers.silentCheckVw = true
+                    sampSendChat("/setvw")
+                else
+                    if (now - p.lastWarnTp) >= TP_CFG.COOLDOWN_WARN then
+                        p.lastWarnTp = now
+                        addTpCommand(string.format("/pm %s 0 :x: Телепортироваться можно раз в 15 секунд", nick))
+                    end
+                end
+            end
+        end
+
+        p.keys.F = pressF
+        p.keys.Alt = pressAlt
+    end
+
     if not st.enabled or st.isGreen or (os.clock() - st.redTime) < CFG.RED_DELAY then return end
     if id == st.myId or isPlayerBlacklisted(id) then return end
     local isMoving = (data.upDownKeys and math.abs(data.upDownKeys) > CFG.DEADZONE)
@@ -3394,7 +3607,7 @@ imgui.OnFrame(function() return UI.show[0] end, function()
                     if imgui.Button(u8"Сигнал: КРАСНЫЙ СВЕТ", imgui.ImVec2(220, 30)) then sendRLGLSignal(false) end
                 end
 
-            -- ==================== СТУЛЬЧИКИ (ОБНОВЛЕННЫЙ РАЗДЕЛ) ====================
+            -- ==================== СТУЛЬЧИКИ ====================
             elseif UI.current_mp == "chairs" then
                 if imgui.Button(u8"< Назад в каталог", imgui.ImVec2(150, 26)) then UI.current_mp = nil end
                 imgui.Separator()
@@ -3444,7 +3657,26 @@ imgui.OnFrame(function() return UI.show[0] end, function()
             end
 
         elseif UI.currentSidebar == 2 then
-            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Контроль нарушений")
+            imgui.TextColored(imgui.ImVec4(0.9, 0.4, 0.45, 1.0), u8"Дополнительные функции и контроль нарушений")
+            imgui.Separator()
+            imgui.Spacing()
+
+            local ch_tpm, val_tpm = ToggleSwitch("##sw_tp_markers", st.tpMarkersActive)
+            if ch_tpm then
+                st.tpMarkersActive = val_tpm
+                saveConfig()
+                if not val_tpm then
+                    tpMarkers.players = {}
+                    tpMarkers.pendingActions = {}
+                    tpMarkers.cmdQueue = {}
+                end
+                sendMsg(st.tpMarkersActive and C.GREEN or C.WARN, st.tpMarkersActive and "Система ТП-меток (F/ALT) включена!" or "Система ТП-меток выключена!")
+            end
+            imgui.SameLine()
+            imgui.Text(st.tpMarkersActive and u8"Система ТП-меток игроков [F: Задать, ALT: ТП] (ВКЛ)" or u8"Система ТП-меток игроков [F: Задать, ALT: ТП] (ВЫКЛ)")
+            imgui.TextDisabled(u8"  * Позволяет участникам ставить метку на F и телепортироваться на нее по ALT с авто-сбросом при смерти/выходе из зоны стрима")
+
+            imgui.Spacing()
             imgui.Separator()
             imgui.Spacing()
 
@@ -3628,17 +3860,42 @@ function main()
         }
     end
 
-    fontText   = renderCreateFont("Arial", 12, 13)
-    fontHUD    = renderCreateFont("Arial", 14, 15)
-    fontSector = renderCreateFont("Arial", 16, 17)
+    fontText     = renderCreateFont("Arial", 12, 13)
+    fontHUD      = renderCreateFont("Arial", 14, 15)
+    fontSector   = renderCreateFont("Arial", 16, 17)
+    fontTPMarker = renderCreateFont("Arial", 9, 5)
     screenW, screenH = getScreenResolution()
-    st.curInt  = getActiveInterior()
+    st.curInt    = getActiveInterior()
 
     local r, myId = sampGetPlayerIdByCharHandle(PLAYER_PED)
     if r then 
         st.myId = myId
         st.myNick = sampGetPlayerNickname(myId) 
     end
+
+    TH.tpQueue = lua_thread.create(function()
+        while true do
+            wait(1000)
+            if st.tpMarkersActive and #tpMarkers.cmdQueue > 0 then
+                local cmd = table.remove(tpMarkers.cmdQueue, 1)
+                sampSendChat(cmd)
+            end
+        end
+    end)
+
+    TH.tpWatch = lua_thread.create(function()
+        while true do
+            wait(100)
+            if st.tpMarkersActive and #tpMarkers.pendingActions > 0 then
+                local now = os.clock()
+                if (now - tpMarkers.pendingActions[1].time) > 1.5 then
+                    local act = table.remove(tpMarkers.pendingActions, 1)
+                    processTpAction(act, tpMarkers.currentWorld)
+                    tpMarkers.silentCheckVw = false
+                end
+            end
+        end
+    end)
 
     sampRegisterChatCommand("amp", function() 
         UI.show[0] = not UI.show[0] 
@@ -3682,5 +3939,6 @@ function main()
         if st.chairs or st.showInact then drawMPZone(); drawZones() end
         if st.dmActive then drawDMHUD() end
         drawSectorsAndSTZone()
+        drawTPMarkers()
     end
 end
